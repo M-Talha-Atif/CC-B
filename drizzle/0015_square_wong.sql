@@ -1,0 +1,1 @@
+ALTER TABLE "chatroom_identities" ADD COLUMN "has_commented" boolean DEFAULT false;

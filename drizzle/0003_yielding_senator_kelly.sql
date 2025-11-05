@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "status" varchar(20) DEFAULT 'pending' NOT NULL;

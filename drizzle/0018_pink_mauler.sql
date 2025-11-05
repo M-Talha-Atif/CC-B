@@ -1,0 +1,1 @@
+ALTER TABLE "poll_votes" ADD COLUMN "vote_timestamp" timestamp DEFAULT now();

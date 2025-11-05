@@ -1,0 +1,1 @@
+ALTER TABLE "posts" RENAME COLUMN "comments_count" TO "commentsCount";

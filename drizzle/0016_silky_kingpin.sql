@@ -1,0 +1,1 @@
+ALTER TABLE "posts" ADD COLUMN "quotes_count" integer DEFAULT 0;

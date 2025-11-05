@@ -1,0 +1,1 @@
+ALTER TABLE "posts" ADD COLUMN "visible_to_author_only" boolean DEFAULT false;
