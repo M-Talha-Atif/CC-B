@@ -158,7 +158,14 @@ const NEW_CREATIVE_POSTS = [
       "How many hours of coverage is your starting price with a second shooter? 📷",
     categories: ["Photographers", "Videographers"],
     type: "poll",
-    pollOptions: ["6", "7", "8", "9", "All day is the minimum"],
+    pollOptions: [
+  { text: "6" },
+  { text: "7" },
+  { text: "8" },
+  { text: "9" },
+  { text: "All day is the minimum" },
+],
+
   },
   {
     subject: "planners who are actually just designers in disguise",
@@ -167,10 +174,11 @@ const NEW_CREATIVE_POSTS = [
     categories: ["Planners", "Florists", "Photographers", "Videographers"],
     type: "poll",
     pollOptions: [
-      "I’ve experienced this too often!",
-      "There’s room for improvement for suuuure",
-      "🤫 Planners are untouchable",
+      { text: "I’ve experienced this too often!" },
+      { text: "There’s room for improvement for suuuure" },
+      { text: "🤫 Planners are untouchable" },
     ],
+
   },
   {
     subject: "how to lose brand trust!",
@@ -320,17 +328,17 @@ async function seedDatabase() {
       .where(eq(posts.userId, seedUserId))
       .limit(1);
 
-    const postSubjects = [
-      "CHOOSE YOUR VENUE WISELY!",
-      "DJ’s over a live band 🎧",
-      "zero reason for slow email responses! 🥲",
-      "STARTING PRICE ON WEBSITE",
-      "planners who are actually just designers in disguise",
-      "how to lose brand trust!",
-      "I don’t want excuses",
-      "harsh observation about videography",
-      "CLIENT COMMUNICATION"
-    ];
+    // const postSubjects = [
+    //   "CHOOSE YOUR VENUE WISELY!",
+    //   "DJ’s over a live band 🎧",
+    //   "zero reason for slow email responses! 🥲",
+    //   "STARTING PRICE ON WEBSITE",
+    //   "planners who are actually just designers in disguise",
+    //   "how to lose brand trust!",
+    //   "I don’t want excuses",
+    //   "harsh observation about videography",
+    //   "CLIENT COMMUNICATION"
+    // ];
 
     // for (const subject of postSubjects) {
     //   const postToDelete = await db
