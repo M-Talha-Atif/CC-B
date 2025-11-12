@@ -64,85 +64,15 @@ const authService = {
     }
   },
 
-  // async registerOrLogin({ email, password, userType = "creative" }) {
-  //   try {
-  //     // Check if user already exists
-  //     const existingUser = await db
-  //       .select()
-  //       .from(users)
-  //       .where(eq(users.email, email))
-  //       .limit(1);
-
-  //     if (existingUser.length > 0) {
-  //       // User exists, attempt login
-  //       const user = existingUser[0];
-
-  //       // Verify password
-  //       const isPasswordValid = await bcrypt.compare(password, user.password);
-
-  //       if (!isPasswordValid) {
-  //         throw new Error("Invalid credentials");
-  //       }
-
-  //       // Get onboarding progress
-  //       const progress = await onboardingService.getProgress(user.id);
-
-  //       // Remove password from response
-  //       const { password: _, ...userWithoutPassword } = user;
-
-  //       return {
-  //         user: userWithoutPassword,
-  //         progress,
-  //         action: "login",
-  //       };
-  //     }
-
-  //     // User doesn't exist, create new user
-  //     const saltRounds = 12;
-  //     const hashedPassword = await bcrypt.hash(password, saltRounds);
-  //     const userReferralCode = generateReferralCode();
-
-  //     const [newUser] = await db
-  //       .insert(users)
-  //       .values({
-  //         email,
-  //         password: hashedPassword,
-  //         userType,
-  //         personalReferralCode: userReferralCode,
-  //       })
-  //       .returning();
-
-  //     // Initialize onboarding progress for new user
-  //     const progress = await onboardingService.initializeProgress(
-  //       newUser.id,
-  //       "referral-code" // Start from referral code for new users
-  //     );
-
-  //     // Update progress with email/password completed
-  //     await onboardingService.updateProgress(newUser.id, {
-  //       currentStep: "referral-code",
-  //       stepCompleted: "email-login",
-  //       formData: { email },
-  //     });
-
-  //     // Remove password from response
-  //     const { password: _, ...userWithoutPassword } = newUser;
-
-  //     return {
-  //       user: userWithoutPassword,
-  //       progress,
-  //       action: "register",
-  //     };
-  //   } catch (error) {
-  //     throw new Error(error.message || "Failed to register or login user");
-  //   }
-  // },
   async registerOrLogin({ email, password, userType = "creative" }) {
     try {
       // Use AnonymousService to check if user exists (handles both regular and anonymous)
       const existingUser = await AnonymousService.findUserByRealEmail(email);
 
+      
+
       if (existingUser) {
+        console.log(existingUser)
         // User exists, attempt login using AnonymousService
         const userData = await AnonymousService.authenticateUser(
           email,
@@ -557,7 +487,7 @@ const authService = {
         .where(eq(users.id, userId))
         .returning();
 
-      // ✅ First, fetch the current onboarding progress to get existing completed steps
+      // First, fetch the current onboarding progress to get existing completed steps
       const [currentProgress] = await db
         .select()
         .from(onboardingProgress)
@@ -569,7 +499,7 @@ const authService = {
         ? [...new Set([...existingSteps, "creative-domain"])]
         : ["creative-domain"];
 
-      // ✅ Update onboarding progress with completion timestamp
+      // Update onboarding progress with completion timestamp
       await db
         .update(onboardingProgress)
         .set({
@@ -634,11 +564,11 @@ const authService = {
           )
         );
 
-      // ✅ INSERT the email too!
+      // INSERT the email too!
       await db.insert(passwordResetTokens).values({
         userId: user.id,
         token: resetToken,
-        email: user.email, // ✅ FIXED HERE
+        email: user.email, // FIXED HERE
         expiresAt: expiresAt,
       });
 

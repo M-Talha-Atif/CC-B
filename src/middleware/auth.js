@@ -5,33 +5,52 @@ const { eq, and, gt } = require("drizzle-orm");
 const AnonymousService = require("../services/anonService");
 
 const authenticateToken = (req, res, next) => {
-  console.log("🍪 All cookies:", req.cookies);
-  console.log("📋 Headers:", req.headers.cookie);
+  const cookieToken = req.cookies?.token;
+  const refreshToken = req.cookies?.refreshToken;
+  const headerToken = req.headers.authorization?.split(" ")[1];
+  const token = cookieToken || headerToken;
 
-  const token = req.cookies.token;
+  console.log("🍪 Cookies:", req.cookies);
+  console.log("🔐 Header token:", headerToken ? headerToken.substring(0, 15) + "..." : "None");
 
-  if (!token) {
-    console.log("❌ No token found in cookies");
-    return res
-      .status(401)
-      .json({ success: false, message: "No token provided" });
+  if (!refreshToken) {
+    // console.log("no token found")
+    return res.status(401).json({ success: false, message: "No token provided" });
   }
-
-  console.log("✅ Token found:", token.substring(0, 20) + "...");
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    console.log("✅ Token verified, userId:", decoded.userId);
     req.user = { id: decoded.userId };
     next();
-  } catch (error) {
-    console.log("❌ Token verification failed:", error.message);
-    if (error.name === "TokenExpiredError") {
+  } catch (err) {
+    console.log("❌ Token verification failed:", err.message);
+    if (err.name === "TokenExpiredError") {
       return res.status(401).json({ success: false, message: "Token expired" });
     }
     return res.status(403).json({ success: false, message: "Invalid token" });
   }
 };
+
+
+// const authenticateToken = (req, res, next) => {
+//   const token = req.cookies.token;
+
+//   if (!token) {
+//     return res.status(401).json({ success: false, message: "No token provided" });
+//   }
+
+//   try {
+//     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+//     req.user = { id: decoded.userId };
+//     next();
+//   } catch (error) {
+//     if (error.name === "TokenExpiredError") {
+//       return res.status(401).json({ success: false, message: "Token expired" });
+//     }
+//     return res.status(403).json({ success: false, message: "Invalid token" });
+//   }
+// };
+
 
 const optionalAuthenticateToken = async (req, res, next) => {
   try {

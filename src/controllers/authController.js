@@ -122,22 +122,16 @@ const authController = {
 
       const cookieOptions = {
         httpOnly: false, // Keep false for mobile access
-        secure: isProduction,
-        sameSite: isProduction ? "none" : "lax",
+        secure: true,
+        sameSite: isProduction ? "none" : "none",
         path: "/",
-        domain: isProduction ? process.env.BACKEND_URL : undefined, // Add domain
+        domain:  process.env.BACKEND_URL,
       };
 
       // Set access token
       res.cookie("token", accessToken, {
         ...cookieOptions,
         maxAge: 7 * 24 * 60 * 60 * 1000,
-      });
-
-      // Set refresh token
-      res.cookie("refreshToken", refreshToken, {
-        ...cookieOptions,
-        maxAge: 90 * 24 * 60 * 60 * 1000,
       });
 
       // 🔥 Set refresh token (180 days instead of 90)
@@ -183,7 +177,7 @@ const authController = {
         httpOnly: true,
         secure: true, // ✅ ALWAYS true with ngrok or HTTPS
         sameSite: "none", // ✅ Needed for cross-site
-        maxAge: 15 * 60 * 1000,
+        maxAge: 1 * 60 * 1000,
         path: "/",
         domain: undefined, // ✅ Let browser handle domain automatically
       };
@@ -963,10 +957,11 @@ const authController = {
       const isProduction = process.env.NODE_ENV === "production";
 
       const cookieOptions = {
-        httpOnly: true,
-        secure: isProduction,
-        sameSite: isProduction ? "none" : "lax",
+        httpOnly: false, // Keep false for mobile access
+        secure: true,
+        sameSite: isProduction ? "none" : "none",
         path: "/",
+        domain:  process.env.BACKEND_URL,
       };
 
       // 🔥 Set new access token (7 days)
@@ -978,7 +973,7 @@ const authController = {
       // 🔥 Set new refresh token (90 days)
       res.cookie("refreshToken", newRefreshToken, {
         ...cookieOptions,
-        maxAge: 90 * 24 * 60 * 60 * 1000,
+        maxAge: 30 * 24 * 60 * 60 * 1000,
       });
 
       console.log("✅ New cookies set, sending response");

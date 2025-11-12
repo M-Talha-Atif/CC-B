@@ -1977,7 +1977,7 @@ const PostController = {
           return res.status(400).json({
             error:
               "Cannot unlike - this would cause the post to lose its threshold status",
-            message: "This like is required to maintain the post's threshold",
+            message: "Action not permitted",
             canUnlike: false,
           });
         }
