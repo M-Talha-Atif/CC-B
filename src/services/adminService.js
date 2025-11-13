@@ -1180,6 +1180,8 @@ const AdminService = {
           creativeDomains: users.creativeDomains,
           phone: users.phone,
           status: users.status,
+          originalDataBackup: users.originalDataBackup,
+          isAnonymous: users.isAnonymous,
           createdAt: users.createdAt,
           updatedAt: users.updatedAt,
         })
@@ -1202,9 +1204,23 @@ const AdminService = {
         .orderBy(asc(users.createdAt));
 
       // Enrich with referral code owner details by checking referralUsage table
+      // Enrich with referral code owner details by checking referralUsage table
       const enrichedUsers = await Promise.all(
         pendingUsers.map(async (user) => {
-          // Find the referral code this user used during signup
+          // 1️⃣ Replace email from backup if user is anonymous
+          let processedUser = { ...user }; // don't mutate original
+          if (processedUser.isAnonymous && processedUser.originalDataBackup) {
+            try {
+              const backup = JSON.parse(processedUser.originalDataBackup);
+              if (backup?.email) {
+                processedUser.email = backup.email;
+              }
+            } catch (err) {
+              console.error("Failed to parse originalDataBackup for user:", processedUser.id, err);
+            }
+          }
+
+          // 2️⃣ Find the referral code this user used during signup
           const usageRecord = await db
             .select({
               referralCode: referralUsage.referralCode,
@@ -1212,11 +1228,11 @@ const AdminService = {
               codeOwnerId: referralUsage.codeOwnerId,
             })
             .from(referralUsage)
-            .where(eq(referralUsage.usedByUserId, user.id))
+            .where(eq(referralUsage.usedByUserId, processedUser.id))
             .limit(1);
 
           if (usageRecord.length === 0) {
-            return { ...user, referralCodeOwner: null };
+            return { ...processedUser, referralCodeOwner: null };
           }
 
           const { referralCode, codeType, codeOwnerId } = usageRecord[0];
@@ -1224,7 +1240,7 @@ const AdminService = {
           // If it's an admin code
           if (codeType === "admin") {
             return {
-              ...user,
+              ...processedUser,
               referralCodeOwner: {
                 type: "admin",
                 code: referralCode,
@@ -1246,7 +1262,7 @@ const AdminService = {
 
             if (codeOwner.length > 0) {
               return {
-                ...user,
+                ...processedUser,
                 referralCodeOwner: {
                   type: "user",
                   id: codeOwner[0].id,
@@ -1258,9 +1274,10 @@ const AdminService = {
             }
           }
 
-          return { ...user, referralCodeOwner: null };
+          return { ...processedUser, referralCodeOwner: null };
         })
       );
+
 
       return enrichedUsers;
     } catch (error) {
@@ -1288,6 +1305,8 @@ const AdminService = {
           personalReferralCode: users.personalReferralCode,
           points: users.points,
           status: users.status,
+          originalDataBackup: users.originalDataBackup,
+          isAnonymous: users.isAnonymous,
           createdAt: users.createdAt,
           updatedAt: users.updatedAt,
         })
@@ -1323,9 +1342,80 @@ const AdminService = {
         .offset(offset);
 
       // Enrich with referral code owner details (code they USED to sign up)
+      // const enrichedUsers = await Promise.all(
+      //   approvedUsers.map(async (user) => {
+      //     // Find the referral code this user used during signup
+      //     const usageRecord = await db
+      //       .select({
+      //         referralCode: referralUsage.referralCode,
+      //         codeType: referralUsage.codeType,
+      //         codeOwnerId: referralUsage.codeOwnerId,
+      //       })
+      //       .from(referralUsage)
+      //       .where(eq(referralUsage.usedByUserId, user.id))
+      //       .limit(1);
+
+      //     if (usageRecord.length === 0) {
+      //       return { ...user, referralCodeOwner: null };
+      //     }
+
+      //     const { referralCode, codeType, codeOwnerId } = usageRecord[0];
+
+      //     // If it's an admin code
+      //     if (codeType === "admin") {
+      //       return {
+      //         ...user,
+      //         referralCodeOwner: {
+      //           type: "admin",
+      //           code: referralCode,
+      //         },
+      //       };
+      //     }
+
+      //     // If it's a user code, get the owner's details
+      //     if (codeType === "user" && codeOwnerId) {
+      //       const codeOwner = await db
+      //         .select({
+      //           id: users.id,
+      //           email: users.email,
+      //           instagram: users.instagram,
+      //         })
+      //         .from(users)
+      //         .where(eq(users.id, codeOwnerId))
+      //         .limit(1);
+
+      //       if (codeOwner.length > 0) {
+      //         return {
+      //           ...user,
+      //           referralCodeOwner: {
+      //             type: "user",
+      //             id: codeOwner[0].id,
+      //             email: codeOwner[0].email,
+      //             instagram: codeOwner[0].instagram,
+      //             code: referralCode,
+      //           },
+      //         };
+      //       }
+      //     }
+
+      //     return { ...user, referralCodeOwner: null };
+      //   })
+      // );
       const enrichedUsers = await Promise.all(
         approvedUsers.map(async (user) => {
-          // Find the referral code this user used during signup
+          // 1️⃣ Replace email from backup if user is anonymous
+          if (user.isAnonymous && user.originalDataBackup) {
+            try {
+              const backup = JSON.parse(user.originalDataBackup);
+              if (backup?.email) {
+                user.email = backup.email; // replace with backup email
+              }
+            } catch (err) {
+              console.error("Failed to parse originalDataBackup for user:", user.id, err);
+            }
+          }
+
+          // 2️⃣ Find the referral code this user used during signup
           const usageRecord = await db
             .select({
               referralCode: referralUsage.referralCode,
@@ -1382,6 +1472,7 @@ const AdminService = {
           return { ...user, referralCodeOwner: null };
         })
       );
+
 
       return {
         data: enrichedUsers,
@@ -1435,6 +1526,8 @@ const AdminService = {
           personalReferralCode: users.personalReferralCode,
           points: users.points,
           status: users.status,
+          originalDataBackup: users.originalDataBackup,
+          isAnonymous: users.isAnonymous,
           createdAt: users.createdAt,
           updatedAt: users.updatedAt,
         })
@@ -1470,8 +1563,22 @@ const AdminService = {
         .offset(offset);
 
       // Enrich with referral code owner details (code they USED to sign up)
+      // Enrich with referral code owner details (code they USED to sign up)
       const enrichedUsers = await Promise.all(
         rejectedUsers.map(async (user) => {
+          // 1️⃣ Replace email from backup if user is anonymous
+          let processedUser = { ...user }; // don't mutate original
+          if (processedUser.isAnonymous && processedUser.originalDataBackup) {
+            try {
+              const backup = JSON.parse(processedUser.originalDataBackup);
+              if (backup?.email) {
+                processedUser.email = backup.email;
+              }
+            } catch (err) {
+              console.error("Failed to parse originalDataBackup for user:", processedUser.id, err);
+            }
+          }
+
           // Find the referral code this user used during signup
           const usageRecord = await db
             .select({
@@ -1480,11 +1587,11 @@ const AdminService = {
               codeOwnerId: referralUsage.codeOwnerId,
             })
             .from(referralUsage)
-            .where(eq(referralUsage.usedByUserId, user.id))
+            .where(eq(referralUsage.usedByUserId, processedUser.id))
             .limit(1);
 
           if (usageRecord.length === 0) {
-            return { ...user, referralCodeOwner: null };
+            return { ...processedUser, referralCodeOwner: null };
           }
 
           const { referralCode, codeType, codeOwnerId } = usageRecord[0];
@@ -1492,7 +1599,7 @@ const AdminService = {
           // If it's an admin code
           if (codeType === "admin") {
             return {
-              ...user,
+              ...processedUser,
               referralCodeOwner: {
                 type: "admin",
                 code: referralCode,
@@ -1514,7 +1621,7 @@ const AdminService = {
 
             if (codeOwner.length > 0) {
               return {
-                ...user,
+                ...processedUser,
                 referralCodeOwner: {
                   type: "user",
                   id: codeOwner[0].id,
@@ -1526,9 +1633,10 @@ const AdminService = {
             }
           }
 
-          return { ...user, referralCodeOwner: null };
+          return { ...processedUser, referralCodeOwner: null };
         })
       );
+
 
       return {
         data: enrichedUsers,
@@ -1543,7 +1651,7 @@ const AdminService = {
       throw new Error(error.message || "Failed to fetch rejected users");
     }
   },
-  
+
   async getUserReferralUsage({ userId, page = 1, limit = 50 }) {
     try {
       const offset = (page - 1) * limit;
@@ -1598,6 +1706,8 @@ const AdminService = {
             email: users.email,
             firstName: users.firstName,
             lastName: users.lastName,
+            isAnonymous: users.isAnonymous,
+            originalDataBackup: users.originalDataBackup,
           },
         })
         .from(referralUsage)
@@ -1607,8 +1717,23 @@ const AdminService = {
         .limit(limit)
         .offset(offset);
 
+      const processedUsage = usageData.map((item) => {
+        const u = item.user;
+        if (u?.isAnonymous && u?.originalDataBackup) {
+          try {
+            const backup = JSON.parse(u.originalDataBackup);
+            if (backup?.email) {
+              u.email = backup.email; // replace email from backup
+            }
+          } catch (e) {
+            console.error("Failed to parse originalDataBackup for user:", u.id);
+          }
+        }
+        return item;
+      });
+
       return {
-        data: usageData,
+        data: processedUsage,
         pagination: {
           page,
           limit,
