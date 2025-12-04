@@ -5,7 +5,7 @@ const { OAuth2Client } = require("google-auth-library");
 const dns = require("dns").promises;
 const axios = require("axios");
 const { users } = require("../models/schema");
-const { eq } = require("drizzle-orm");
+const { eq, and, isNotNull } = require("drizzle-orm");
 const { db } = require("../config/database");
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const jwt = require("jsonwebtoken");
@@ -125,7 +125,7 @@ const authController = {
         secure: true,
         sameSite: isProduction ? "none" : "none",
         path: "/",
-        domain:  process.env.BACKEND_URL,
+        domain: process.env.BACKEND_URL,
       };
 
       // Set access token
@@ -230,22 +230,62 @@ const authController = {
         });
       }
 
-      // Check if user exists with this email
+      const normalizedEmail = email.toLowerCase().trim();
+
+      // Check if user exists with this email in the email column
       const existingUser = await db
         .select({
           id: users.id,
           email: users.email,
         })
         .from(users)
-        .where(eq(users.email, email.toLowerCase()))
+        .where(eq(users.email, normalizedEmail))
         .limit(1);
 
-      const emailExists = existingUser.length > 0;
+      if (existingUser.length > 0) {
+        return res.status(200).json({
+          success: true,
+          data: {
+            exists: true,
+          },
+        });
+      }
+
+      // Check if email exists in originalDataBackup (for anonymous users)
+      const anonymousUsers = await db
+        .select({
+          id: users.id,
+          originalDataBackup: users.originalDataBackup,
+        })
+        .from(users)
+        .where(
+          and(
+            eq(users.isAnonymous, true),
+            isNotNull(users.originalDataBackup)
+          )
+        );
+
+      // Parse and check each backup for the email
+      const emailExistsInBackup = anonymousUsers.some((user) => {
+        try {
+          if (user.originalDataBackup) {
+            const backup = JSON.parse(user.originalDataBackup);
+            return backup?.email?.toLowerCase() === normalizedEmail;
+          }
+          return false;
+        } catch (err) {
+          console.error(
+            `Failed to parse originalDataBackup for user ${user.id}:`,
+            err
+          );
+          return false;
+        }
+      });
 
       return res.status(200).json({
         success: true,
         data: {
-          exists: emailExists,
+          exists: emailExistsInBackup,
         },
       });
     } catch (error) {
@@ -255,8 +295,8 @@ const authController = {
         message: "Failed to check email availability",
       });
     }
-  },
-
+  }
+  ,
   async googleLoginCreative(req, res) {
     try {
       const { googleToken, userType } = req.body;
@@ -800,7 +840,7 @@ const authController = {
       });
     } catch (error) {
       console.log(error.message);
-      
+
       res.status(400).json({
         success: false,
         message: error.message,
@@ -961,7 +1001,7 @@ const authController = {
         secure: true,
         sameSite: isProduction ? "none" : "none",
         path: "/",
-        domain:  process.env.BACKEND_URL,
+        domain: process.env.BACKEND_URL,
       };
 
       // 🔥 Set new access token (7 days)
@@ -1024,12 +1064,12 @@ const authController = {
       // ✅ Step 1 - exchange code for Facebook access token
       const graphRes = await fetch(
         `https://graph.facebook.com/v19.0/oauth/access_token?` +
-          new URLSearchParams({
-            client_id: clientId,
-            client_secret: clientSecret,
-            redirect_uri: redirectUri,
-            code,
-          }),
+        new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uri: redirectUri,
+          code,
+        }),
         {
           method: "GET",
         }
@@ -1079,7 +1119,7 @@ const authController = {
         if (!pageDetailRes.ok) {
           throw new Error(
             pageDetails.error?.message ||
-              `Failed to get details for page ${page.id}`
+            `Failed to get details for page ${page.id}`
           );
         }
 
@@ -1263,6 +1303,34 @@ const authController = {
       });
     }
   },
+
+  async checkInstagram(req, res) {
+    try {
+      const { instagram } = req.body;
+
+      if (!instagram) {
+        return res.status(400).json({
+          success: false,
+          message: "Instagram handle is required"
+        });
+      }
+
+      const result = await authService.checkInstagramExists(instagram);
+
+      return res.status(200).json({
+        success: true,
+        exists: result.exists,
+        message: result.message
+      });
+    } catch (error) {
+      console.error("Check Instagram error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to check Instagram availability"
+      });
+    }
+  }
+
 };
 
 module.exports = authController;

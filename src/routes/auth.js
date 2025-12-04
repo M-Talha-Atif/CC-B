@@ -19,7 +19,6 @@ router.post("/google-login-creative", authController.googleLoginCreative);
 router.post("/google-login-couple", authController.googleLoginCouple);
 router.post("/instagram/exchange-token", authController.exchangeInstagramToken);
 router.get("/check-status", authenticateToken, authController.checkUserStatus);
-
 router.post("/send-verification-email", authController.sendVerificationEmail);
 router.get("/verify-email/:token", authController.verifyEmailToken);
 router.get(
@@ -99,5 +98,8 @@ router.get("/verify-reset-token/:token", authController.verifyResetToken);
 router.post("/refresh-token", authController.refreshToken);
 router.post("/logout", authenticateToken, authController.logout);
 router.get("/me", authenticateToken, authController.getProfile);
+
+// verify instagram exists or not
+router.post("/check-instagram", authenticateToken, authController.checkInstagram);
 
 module.exports = router;

@@ -28,7 +28,7 @@ const initializeSocket = (server) => {
       
       // Join user to their personal room
       socket.join(`user:${userId}`);
-      console.log(`✅ User ${userId} authenticated on socket ${socket.id}`);
+      console.log(`User ${userId} authenticated on socket ${socket.id}`);
     });
 
     // Handle disconnect

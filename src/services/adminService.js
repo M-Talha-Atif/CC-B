@@ -810,7 +810,7 @@ const AdminService = {
       whereConditions.push(eq(referralUsage.referralCode, referralCode));
     if (userId) whereConditions.push(eq(referralUsage.usedByUserId, userId));
 
-    const data = await db
+    const rawData = await db
       .select({
         id: referralUsage.id,
         referralCode: referralUsage.referralCode,
@@ -825,6 +825,8 @@ const AdminService = {
           firstName: users.firstName,
           lastName: users.lastName,
           email: users.email,
+          originalDataBackup: users.originalDataBackup,
+          isAnonymous: users.isAnonymous,
         },
       })
       .from(referralUsage)
@@ -833,6 +835,27 @@ const AdminService = {
       .orderBy(desc(referralUsage.usedAt))
       .limit(limit)
       .offset(offset);
+
+    // inject real email if user is anonymous
+    const data = rawData.map((item) => {
+      if (item.user?.isAnonymous && item.user?.originalDataBackup) {
+        try {
+          const backup = JSON.parse(item.user.originalDataBackup);
+          if (backup?.email) {
+            return {
+              ...item,
+              user: {
+                ...item.user,
+                email: backup.email,
+              },
+            };
+          }
+        } catch (e) {
+          console.error("Backup parse failed for user:", item.user.id);
+        }
+      }
+      return item;
+    });
 
     const [{ count }] = await db
       .select({ count: sql`count(*)`.mapWith(Number) })
@@ -1212,11 +1235,21 @@ const AdminService = {
           if (processedUser.isAnonymous && processedUser.originalDataBackup) {
             try {
               const backup = JSON.parse(processedUser.originalDataBackup);
-              if (backup?.email) {
-                processedUser.email = backup.email;
-              }
+
+              processedUser.email = backup?.email ?? processedUser.email;
+              processedUser.phone = backup?.phone ?? processedUser.phone;
+              processedUser.website = backup?.website ?? processedUser.website;
+              processedUser.instagram = backup?.instagram ?? processedUser.instagram;
+              processedUser.businessName = backup?.businessName ?? processedUser.businessName;
+              processedUser.firstName = backup?.firstName ?? processedUser.firstName;
+              processedUser.lastName = backup?.lastName ?? processedUser.lastName;
+
             } catch (err) {
-              console.error("Failed to parse originalDataBackup for user:", processedUser.id, err);
+              console.error(
+                "Failed to parse originalDataBackup for user:",
+                processedUser.id,
+                err
+              );
             }
           }
 
@@ -1248,26 +1281,43 @@ const AdminService = {
             };
           }
 
-          // If it's a user code, get the owner's details
+          // OWNER DETAILS (for user referral codes)
           if (codeType === "user" && codeOwnerId) {
             const codeOwner = await db
               .select({
                 id: users.id,
                 email: users.email,
                 instagram: users.instagram,
+                isAnonymous: users.isAnonymous,
+                originalDataBackup: users.originalDataBackup,
               })
               .from(users)
               .where(eq(users.id, codeOwnerId))
               .limit(1);
 
             if (codeOwner.length > 0) {
+              let owner = { ...codeOwner[0] };
+
+              // Restore from backup if referral owner was anonymous
+              if (owner.isAnonymous && owner.originalDataBackup) {
+                try {
+                  const backup = JSON.parse(owner.originalDataBackup);
+
+                  owner.email = backup?.email ?? owner.email;
+                  owner.instagram = backup?.instagram ?? owner.instagram;
+
+                } catch (err) {
+                  console.error("Failed to parse referral owner backup:", owner.id, err);
+                }
+              }
+
               return {
                 ...processedUser,
                 referralCodeOwner: {
                   type: "user",
-                  id: codeOwner[0].id,
-                  email: codeOwner[0].email,
-                  instagram: codeOwner[0].instagram,
+                  id: owner.id,
+                  email: owner.email,
+                  instagram: owner.instagram,
                   code: referralCode,
                 },
               };
@@ -1342,80 +1392,30 @@ const AdminService = {
         .offset(offset);
 
       // Enrich with referral code owner details (code they USED to sign up)
-      // const enrichedUsers = await Promise.all(
-      //   approvedUsers.map(async (user) => {
-      //     // Find the referral code this user used during signup
-      //     const usageRecord = await db
-      //       .select({
-      //         referralCode: referralUsage.referralCode,
-      //         codeType: referralUsage.codeType,
-      //         codeOwnerId: referralUsage.codeOwnerId,
-      //       })
-      //       .from(referralUsage)
-      //       .where(eq(referralUsage.usedByUserId, user.id))
-      //       .limit(1);
-
-      //     if (usageRecord.length === 0) {
-      //       return { ...user, referralCodeOwner: null };
-      //     }
-
-      //     const { referralCode, codeType, codeOwnerId } = usageRecord[0];
-
-      //     // If it's an admin code
-      //     if (codeType === "admin") {
-      //       return {
-      //         ...user,
-      //         referralCodeOwner: {
-      //           type: "admin",
-      //           code: referralCode,
-      //         },
-      //       };
-      //     }
-
-      //     // If it's a user code, get the owner's details
-      //     if (codeType === "user" && codeOwnerId) {
-      //       const codeOwner = await db
-      //         .select({
-      //           id: users.id,
-      //           email: users.email,
-      //           instagram: users.instagram,
-      //         })
-      //         .from(users)
-      //         .where(eq(users.id, codeOwnerId))
-      //         .limit(1);
-
-      //       if (codeOwner.length > 0) {
-      //         return {
-      //           ...user,
-      //           referralCodeOwner: {
-      //             type: "user",
-      //             id: codeOwner[0].id,
-      //             email: codeOwner[0].email,
-      //             instagram: codeOwner[0].instagram,
-      //             code: referralCode,
-      //           },
-      //         };
-      //       }
-      //     }
-
-      //     return { ...user, referralCodeOwner: null };
-      //   })
-      // );
       const enrichedUsers = await Promise.all(
         approvedUsers.map(async (user) => {
-          // 1️⃣ Replace email from backup if user is anonymous
-          if (user.isAnonymous && user.originalDataBackup) {
+          // Clone once to avoid mutation
+          let processedUser = { ...user };
+
+          // Restore fields from anonymous backup without mutation
+          if (processedUser.isAnonymous && processedUser.originalDataBackup) {
             try {
-              const backup = JSON.parse(user.originalDataBackup);
-              if (backup?.email) {
-                user.email = backup.email; // replace with backup email
-              }
+              const backup = JSON.parse(processedUser.originalDataBackup);
+
+              processedUser.email = backup?.email ?? processedUser.email;
+              processedUser.phone = backup?.phone ?? processedUser.phone;
+              processedUser.website = backup?.website ?? processedUser.website;
+              processedUser.instagram = backup?.instagram ?? processedUser.instagram;
+              processedUser.businessName = backup?.businessName ?? processedUser.businessName;
+              processedUser.firstName = backup?.firstName ?? processedUser.firstName;
+              processedUser.lastName = backup?.lastName ?? processedUser.lastName;
+
             } catch (err) {
-              console.error("Failed to parse originalDataBackup for user:", user.id, err);
+              console.error("Failed to parse originalDataBackup:", processedUser.id, err);
             }
           }
 
-          // 2️⃣ Find the referral code this user used during signup
+          // Get referral usage info
           const usageRecord = await db
             .select({
               referralCode: referralUsage.referralCode,
@@ -1423,19 +1423,19 @@ const AdminService = {
               codeOwnerId: referralUsage.codeOwnerId,
             })
             .from(referralUsage)
-            .where(eq(referralUsage.usedByUserId, user.id))
+            .where(eq(referralUsage.usedByUserId, processedUser.id))
             .limit(1);
 
           if (usageRecord.length === 0) {
-            return { ...user, referralCodeOwner: null };
+            return { ...processedUser, referralCodeOwner: null };
           }
 
           const { referralCode, codeType, codeOwnerId } = usageRecord[0];
 
-          // If it's an admin code
+          // Admin code
           if (codeType === "admin") {
             return {
-              ...user,
+              ...processedUser,
               referralCodeOwner: {
                 type: "admin",
                 code: referralCode,
@@ -1443,35 +1443,53 @@ const AdminService = {
             };
           }
 
-          // If it's a user code, get the owner's details
+          // User referral code
           if (codeType === "user" && codeOwnerId) {
-            const codeOwner = await db
+            const codeOwnerResult = await db
               .select({
                 id: users.id,
                 email: users.email,
                 instagram: users.instagram,
+                isAnonymous: users.isAnonymous,
+                originalDataBackup: users.originalDataBackup,
               })
               .from(users)
               .where(eq(users.id, codeOwnerId))
               .limit(1);
 
-            if (codeOwner.length > 0) {
+            if (codeOwnerResult.length > 0) {
+              let owner = { ...codeOwnerResult[0] };
+
+              // Restore referral owner backup safely
+              if (owner.isAnonymous && owner.originalDataBackup) {
+                try {
+                  const backup = JSON.parse(owner.originalDataBackup);
+
+                  owner.email = backup?.email ?? owner.email;
+                  owner.instagram = backup?.instagram ?? owner.instagram;
+
+                } catch (err) {
+                  console.error("Failed to parse referral owner backup:", owner.id, err);
+                }
+              }
+
               return {
-                ...user,
+                ...processedUser,
                 referralCodeOwner: {
                   type: "user",
-                  id: codeOwner[0].id,
-                  email: codeOwner[0].email,
-                  instagram: codeOwner[0].instagram,
+                  id: owner.id,
+                  email: owner.email,
+                  instagram: owner.instagram,
                   code: referralCode,
                 },
               };
             }
           }
 
-          return { ...user, referralCodeOwner: null };
+          return { ...processedUser, referralCodeOwner: null };
         })
       );
+
 
 
       return {
@@ -1568,14 +1586,25 @@ const AdminService = {
         rejectedUsers.map(async (user) => {
           // 1️⃣ Replace email from backup if user is anonymous
           let processedUser = { ...user }; // don't mutate original
+
           if (processedUser.isAnonymous && processedUser.originalDataBackup) {
             try {
               const backup = JSON.parse(processedUser.originalDataBackup);
-              if (backup?.email) {
-                processedUser.email = backup.email;
-              }
+
+              processedUser.email = backup?.email ?? processedUser.email;
+              processedUser.phone = backup?.phone ?? processedUser.phone;
+              processedUser.website = backup?.website ?? processedUser.website;
+              processedUser.instagram = backup?.instagram ?? processedUser.instagram;
+              processedUser.businessName = backup?.businessName ?? processedUser.businessName;
+              processedUser.firstName = backup?.firstName ?? processedUser.firstName;
+              processedUser.lastName = backup?.lastName ?? processedUser.lastName;
+
             } catch (err) {
-              console.error("Failed to parse originalDataBackup for user:", processedUser.id, err);
+              console.error(
+                "Failed to parse originalDataBackup for user:",
+                processedUser.id,
+                err
+              );
             }
           }
 
@@ -1607,26 +1636,41 @@ const AdminService = {
             };
           }
 
-          // If it's a user code, get the owner's details
           if (codeType === "user" && codeOwnerId) {
             const codeOwner = await db
               .select({
                 id: users.id,
                 email: users.email,
                 instagram: users.instagram,
+                isAnonymous: users.isAnonymous,
+                originalDataBackup: users.originalDataBackup,
               })
               .from(users)
               .where(eq(users.id, codeOwnerId))
               .limit(1);
 
             if (codeOwner.length > 0) {
+              let owner = { ...codeOwner[0] };
+
+              // Restore original backup if owner is anonymous
+              if (owner.isAnonymous && owner.originalDataBackup) {
+                try {
+                  const backup = JSON.parse(owner.originalDataBackup);
+
+                  owner.email = backup?.email ?? owner.email;
+                  owner.instagram = backup?.instagram ?? owner.instagram;
+                } catch (err) {
+                  console.error("Failed to parse owner backup:", owner.id, err);
+                }
+              }
+
               return {
                 ...processedUser,
                 referralCodeOwner: {
                   type: "user",
-                  id: codeOwner[0].id,
-                  email: codeOwner[0].email,
-                  instagram: codeOwner[0].instagram,
+                  id: owner.id,
+                  email: owner.email,
+                  instagram: owner.instagram,
                   code: referralCode,
                 },
               };

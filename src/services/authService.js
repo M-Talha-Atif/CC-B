@@ -69,7 +69,7 @@ const authService = {
       // Use AnonymousService to check if user exists (handles both regular and anonymous)
       const existingUser = await AnonymousService.findUserByRealEmail(email);
 
-      
+
 
       if (existingUser) {
         console.log(existingUser)
@@ -530,11 +530,18 @@ const authService = {
   async initiatePasswordReset(email) {
     try {
       // Check if user exists
+
       const existingUser = await db
         .select()
         .from(users)
-        .where(eq(users.email, email))
+        .where(
+          or(
+            eq(users.email, email),
+            sql`${users.originalDataBackup}::json ->> 'email' = ${email}`
+          )
+        )
         .limit(1);
+
 
       if (existingUser.length === 0) {
         // For security, don't reveal if email doesn't exist
@@ -970,6 +977,51 @@ const authService = {
       console.error("Failed to update last login:", error);
     }
   },
+
+  async checkInstagramExists(instagram) {
+    try {
+      console.log("Original Instagram input:", instagram);
+
+      const cleanInstagram = instagram.replace(/^@/, '').trim().toLowerCase();
+      console.log("Cleaned Instagram handle:", cleanInstagram);
+
+      if (!cleanInstagram) {
+        return {
+          exists: false,
+          message: "Instagram handle is required"
+        };
+      }
+
+      const existingUser = await db
+        .select()
+        .from(users)
+        .where(sql`LOWER(${users.instagram}) = ${cleanInstagram}`)
+        .limit(1);
+
+      console.log("Database query result:", existingUser);
+
+      if (existingUser.length > 0) {
+        return {
+          exists: true,
+          message: "Instagram account already in use"
+        };
+      }
+
+      return {
+        exists: false,
+        message: "Instagram handle available"
+      };
+    } catch (error) {
+      console.error("Instagram check error:", error);
+      throw new Error("Failed to check Instagram availability");
+    }
+  }
+  ,
+
+
 };
+
+
+
 
 module.exports = authService;
