@@ -1,6 +1,6 @@
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const { eq, and, sql, or } = require("drizzle-orm");
+const { eq, and, sql, or, ne } = require("drizzle-orm");
 const { db } = require("../config/database");
 const {
   users,
@@ -68,30 +68,84 @@ const authService = {
     try {
       // Use AnonymousService to check if user exists (handles both regular and anonymous)
       const existingUser = await AnonymousService.findUserByRealEmail(email);
-
+      console.log(existingUser)
 
 
       if (existingUser) {
-        console.log(existingUser)
-        // User exists, attempt login using AnonymousService
-        const userData = await AnonymousService.authenticateUser(
-          email,
-          password
-        );
+        // If rejected → reset user so they can register fresh
+        // If rejected → reset user so they can register fresh
+        if (existingUser.status === "rejected") {
+          // RESET user
+          const saltRounds = 12;
+          const hashedPassword = await bcrypt.hash(password, saltRounds);
+          const referral = generateReferralCode();
 
-        // Get onboarding progress
-        const progress = await onboardingService.getProgress(userData.id);
+          const [updatedUser] = await db
+            .update(users)
+            .set({
+              status: "pending",
+              password: hashedPassword,
+              userType,
+              personalReferralCode: referral,
 
-        // Format user data for response (shows anonymous data if user is anonymous)
-        const userForResponse =
-          AnonymousService.formatUserForResponse(userData);
+              firstName: null,
+              lastName: null,
+              profilePicture: null,
+              phone: null,
+              instagram: null,
+              website: null,
+              creativeDomains: null,
+              businessName: null,
+              emailVerified: false,
+              phoneVerified: false,
+              profileCompleted: false,
+              updatedAt: new Date(),
+            })
+            .where(eq(users.id, existingUser.id))
+            .returning();
 
-        return {
-          user: userForResponse,
-          progress,
-          action: "login",
-          isNewUser: false,
-        };
+          // Delete old onboarding progress
+          await db.delete(onboardingProgress).where(eq(onboardingProgress.userId, updatedUser.id));
+
+          // --- Use the exact same onboarding flow as for a new user ---
+          const progress = await onboardingService.initializeProgress(
+            updatedUser.id,
+            "referral-code" // same starting step as new users
+          );
+
+          // Update progress with email-password step completed
+          await onboardingService.updateProgress(updatedUser.id, {
+            currentStep: "referral-code",
+            stepCompleted: "email-login",
+            formData: { email },
+          });
+
+
+          const userForResponse = AnonymousService.formatUserForResponse(updatedUser);
+
+          return {
+            user: userForResponse,
+            progress,
+            action: "register",
+            isNewUser: true,
+          };
+        }
+
+
+        else if (existingUser.status === "approved")  {
+          // Normal login flow
+          const userData = await AnonymousService.authenticateUser(email, password);
+
+          const progress = await onboardingService.getProgress(userData.id);
+          const userForResponse = AnonymousService.formatUserForResponse(userData);
+
+          return {
+            user: userForResponse,
+            progress,
+            action: "login",
+            isNewUser: false,
+          };
+        }
       }
 
       // User doesn't exist, create new user
@@ -579,8 +633,11 @@ const authService = {
         expiresAt: expiresAt,
       });
 
+      console.log(email)
+
+      // console.log(user.email)
       // Send password reset email
-      await emailService.sendPasswordResetEmail(user.email, resetToken);
+      await emailService.sendPasswordResetEmail(email, resetToken);
 
       return {
         tokenSent: true,
@@ -995,7 +1052,12 @@ const authService = {
       const existingUser = await db
         .select()
         .from(users)
-        .where(sql`LOWER(${users.instagram}) = ${cleanInstagram}`)
+        .where(
+          and(
+            sql`LOWER(${users.instagram}) = ${cleanInstagram}`,
+            ne(users.status, "rejected")
+          )
+        )
         .limit(1);
 
       console.log("Database query result:", existingUser);

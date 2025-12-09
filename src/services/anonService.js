@@ -157,7 +157,13 @@ class AnonymousService {
     try {
       // Check regular users first
       let user = await db
-        .select()
+        .select({
+          id: users.id,
+          email: users.email,
+          status: users.status,
+          isAnonymous: users.isAnonymous,
+          encryptedData: users.encryptedData,
+        })
         .from(users)
         .where(and(eq(users.email, email), eq(users.isAnonymous, false)))
         .limit(1);
@@ -168,7 +174,12 @@ class AnonymousService {
 
       // Check anonymous users
       const anonymousUsers = await db
-        .select()
+        .select({
+          id: users.id,
+          status: users.status,
+          isAnonymous: users.isAnonymous,
+          encryptedData: users.encryptedData,
+        })
         .from(users)
         .where(eq(users.isAnonymous, true));
 

@@ -237,12 +237,13 @@ const authController = {
         .select({
           id: users.id,
           email: users.email,
+          status: users.status,  // <-- you MUST fetch this
         })
         .from(users)
         .where(eq(users.email, normalizedEmail))
         .limit(1);
-
-      if (existingUser.length > 0) {
+      console.log(existingUser[0])
+      if (existingUser.length > 0 && existingUser[0].status !== "rejected") {
         return res.status(200).json({
           success: true,
           data: {
