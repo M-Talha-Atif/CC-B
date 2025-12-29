@@ -5,7 +5,7 @@ const { OAuth2Client } = require("google-auth-library");
 const dns = require("dns").promises;
 const axios = require("axios");
 const { users } = require("../models/schema");
-const { eq, and, isNotNull } = require("drizzle-orm");
+const { eq, and, isNotNull, sql } = require("drizzle-orm");
 const { db } = require("../config/database");
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const jwt = require("jsonwebtoken");
@@ -232,6 +232,9 @@ const authController = {
 
       const normalizedEmail = email.toLowerCase().trim();
 
+      console.log(normalizedEmail)
+
+
       // Check if user exists with this email in the email column
       const existingUser = await db
         .select({
@@ -240,9 +243,11 @@ const authController = {
           status: users.status,  // <-- you MUST fetch this
         })
         .from(users)
-        .where(eq(users.email, normalizedEmail))
+        .where(sql`LOWER(${users.email}) = ${normalizedEmail}`)
         .limit(1);
+
       console.log(existingUser[0])
+      console.log(existingUser)
       if (existingUser.length > 0 && existingUser[0].status !== "rejected") {
         return res.status(200).json({
           success: true,

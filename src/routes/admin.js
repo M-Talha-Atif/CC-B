@@ -1,5 +1,6 @@
 const express = require("express");
 const adminController = require("../controllers/adminController");
+const postController = require("../controllers/postController");
 const { authenticateToken } = require("../middleware/auth");
 // const {
 //   validateCreateReferralCode,
@@ -26,6 +27,10 @@ router.post(
   "/referral-codes/:id/unassign",
   adminController.unassignReferralCode
 );
+
+// reported posts
+router.get("/posts/reported", postController.getReportedPosts);
+router.delete("/posts/:postId", postController.deletePostByAdmin);
 
 // Analytics and reporting
 router.get("/referral-analytics", adminController.getReferralAnalytics);

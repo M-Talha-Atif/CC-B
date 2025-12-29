@@ -4,11 +4,9 @@ const { eq, and, sql, or, ne } = require("drizzle-orm");
 const { db } = require("../config/database");
 const {
   users,
-  referralCodes,
   otpCodes,
   adminReferralCodes,
   referralUsage,
-  pointsTransactions,
   passwordResetTokens,
   emailVerificationTokens,
   onboardingProgress,
@@ -73,7 +71,7 @@ const authService = {
 
       if (existingUser) {
         // If rejected → reset user so they can register fresh
-        // If rejected → reset user so they can register fresh
+
         if (existingUser.status === "rejected") {
           // RESET user
           const saltRounds = 12;
@@ -131,8 +129,7 @@ const authService = {
           };
         }
 
-
-        else if (existingUser.status === "approved")  {
+        else if (existingUser.status === "approved" || existingUser.status === "pending") {
           // Normal login flow
           const userData = await AnonymousService.authenticateUser(email, password);
 
@@ -172,7 +169,7 @@ const authService = {
       // Update progress with email/password completed
       await onboardingService.updateProgress(newUser.id, {
         currentStep: "referral-code",
-        stepCompleted: "email-login",
+        stepCompleted: "auth",
         formData: { email },
       });
 
@@ -259,6 +256,7 @@ const authService = {
   async verifyReferralCode(code, usedByUserId) {
     try {
       // Check if already used by this user
+     
       const existingUsage = await db
         .select()
         .from(referralUsage)
@@ -326,7 +324,7 @@ const authService = {
         throw new Error("You cannot use your own referral code.");
       }
 
-      // ✅ NEW: Check if referral code has already approved 7 users
+      // NEW: Check if referral code has already approved 7 users
       const approvedUsageCount = await db
         .select({ count: sql`count(*)` })
         .from(referralUsage)
@@ -338,9 +336,9 @@ const authService = {
         );
 
       const approvedCount = Number(approvedUsageCount[0].count);
-      const REFERRAL_LIMIT = 7;
+      const REFERRAL_LIMIT = 7; // only for users account
 
-      if (approvedCount >= REFERRAL_LIMIT) {
+      if (userCode && approvedCount >= REFERRAL_LIMIT) {
         return {
           isValid: false,
           message:
@@ -1037,20 +1035,23 @@ const authService = {
 
   async checkInstagramExists(instagram) {
     try {
-      console.log("Original Instagram input:", instagram);
+      
+      const cleanInstagram = instagram;
 
-      const cleanInstagram = instagram.replace(/^@/, '').trim().toLowerCase();
-      console.log("Cleaned Instagram handle:", cleanInstagram);
+      console.log("Incoming Instagram:", cleanInstagram);
 
       if (!cleanInstagram) {
         return {
           exists: false,
-          message: "Instagram handle is required"
+          message: "Instagram handle is required",
         };
       }
 
-      const existingUser = await db
-        .select()
+      /* ============================
+         CHECK CURRENT instagram
+      ============================ */
+      const directMatch = await db
+        .select({ id: users.id, instagram: users.instagram })
         .from(users)
         .where(
           and(
@@ -1060,24 +1061,59 @@ const authService = {
         )
         .limit(1);
 
-      console.log("Database query result:", existingUser);
-
-      if (existingUser.length > 0) {
+      if (directMatch.length) {
         return {
           exists: true,
-          message: "Instagram account already in use"
+          message: "Instagram already used (current profile)",
         };
+      }
+
+      /* ============================
+         CHECK originalDataBackup
+         approved users only
+      ============================ */
+      const backupCandidates = await db
+        .select({
+          id: users.id,
+          status: users.status,
+          originalDataBackup: users.originalDataBackup,
+        })
+        .from(users)
+        .where(eq(users.status, "approved"));
+
+      for (const user of backupCandidates) {
+        if (!user.originalDataBackup) continue;
+
+        let backup;
+        try {
+          backup = JSON.parse(user.originalDataBackup);
+        } catch {
+          console.warn("Invalid JSON in originalDataBackup:", user.id);
+          continue;
+        }
+
+        const backupInstagram = backup.instagram;
+
+        if (backupInstagram === cleanInstagram) {
+          console.log("Matched in originalDataBackup for user:", user.id);
+
+          return {
+            exists: true,
+            message: "Instagram already used (original backup)",
+          };
+        }
       }
 
       return {
         exists: false,
-        message: "Instagram handle available"
+        message: "Instagram handle available",
       };
     } catch (error) {
       console.error("Instagram check error:", error);
       throw new Error("Failed to check Instagram availability");
     }
   }
+
   ,
 
 

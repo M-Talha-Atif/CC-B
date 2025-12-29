@@ -429,7 +429,11 @@ const emailService = {
       }
 
       const transporter = createTransporter();
-      const resetUrl = `${process.env.FRONTEND_URL}/login/reset-password?token=${resetToken}`;
+      let resetUrl = `${process.env.FRONTEND_URL}/login/reset-password?token=${resetToken}`;
+      if ( email === "admin@cunocovo.com"){
+        resetUrl = `${process.env.ADMIN_URL}/login/reset-password?token=${resetToken}`;
+
+      }
 
       const mailOptions = {
         from: `"CUNO COVO" <${process.env.EMAIL_USER}>`,

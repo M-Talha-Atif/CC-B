@@ -8,6 +8,7 @@ const {
   decimal,
   integer,
   json,
+  nullable,
 } = require("drizzle-orm/pg-core");
 
 const { sql } = require("drizzle-orm");
@@ -268,6 +269,9 @@ const posts = pgTable("posts", {
   quotesCount: integer("quotes_count").default(0),
   isActive: boolean("is_active").default(true),
 
+  // reported times
+  reportCount: integer("report_count").default(0),
+
   // NEW FIELDS FOR CRON JOB FUNCTIONALITY
   commentsEnabled: boolean("comments_enabled").default(false), // Whether comments are enabled
   commentsEnabledAt: timestamp("comments_enabled_at"), // When comments were enabled
@@ -502,6 +506,26 @@ const creativeProposals = pgTable("creative_proposals", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+const reportedPosts = pgTable("reported_posts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  postId: uuid("post_id")
+    .references(() => posts.id, { onDelete: "cascade" })
+    .notNull(),
+  reportedBy: uuid("reported_by")
+    .references(() => users.id, { onDelete: "cascade" })
+    .notNull(),
+
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  // Composite unique index: one report per user per post
+  uniqueUserPost: uniqueIndex("unique_user_post_report").on(
+    table.reportedBy,
+    table.postId
+  ),
+  // Index for quick lookups
+  postIdIdx: index("report_post_id_idx").on(table.postId),
+}));
+
 module.exports = {
   users,
   notifications,
@@ -523,4 +547,5 @@ module.exports = {
   chatroomIdentities,
   creativeInquiries,
   creativeProposals,
+  reportedPosts
 };

@@ -1,6 +1,6 @@
 const { db } = require("../config/database");
 const { users, adminReferralCodes } = require("../models/schema");
-const { eq, desc, count, sql, and, ne } = require("drizzle-orm");
+const { eq, desc, count, sql, and, ne, or, lt } = require("drizzle-orm");
 const AnonymousService = require("../services/anonService");
 
 const UserController = {
@@ -19,18 +19,28 @@ const UserController = {
 
       const userPoints = parseFloat(currentUser.points);
       const userType = currentUser.userType;
+      const userCreatedAt = currentUser.createdAt;
 
-      // Count users with more points (same userType only, excluding admins)
+      // Count users ranked higher (more points OR same points but registered earlier)
+      // Exclude admin users
       const [rankData] = await db
         .select({
-          usersWithMorePoints: count(users.id),
+          usersRankedHigher: count(users.id),
         })
         .from(users)
         .where(
           and(
-            sql`CAST(${users.points} AS DECIMAL) > ${userPoints}`,
             eq(users.userType, userType),
-            ne(users.userType, "admin") // Exclude admin users
+            ne(users.userType, "admin"),
+            or(
+              // Case 1: Users with more points
+              sql`CAST(${users.points} AS DECIMAL) > ${userPoints}`,
+              // Case 2: Same points but registered earlier (FIRST COME FIRST SERVE)
+              and(
+                sql`CAST(${users.points} AS DECIMAL) = ${userPoints}`,
+                lt(users.createdAt, userCreatedAt) //  Drizzle's lt() operator
+              )
+            )
           )
         );
 
@@ -43,11 +53,11 @@ const UserController = {
         .where(
           and(
             eq(users.userType, userType),
-            ne(users.userType, "admin") // Exclude admin users
+            ne(users.userType, "admin")
           )
         );
 
-      const rank = rankData.usersWithMorePoints + 1;
+      const rank = rankData.usersRankedHigher + 1;
       const totalUserCount = totalUsers.total;
 
       // Calculate percentile
@@ -76,8 +86,8 @@ const UserController = {
       console.error("Error fetching user rank:", error);
       res.status(500).json({ error: "Failed to fetch user rank" });
     }
-  },
-
+  }
+,
   // Fixed getAssignedReferralCode method
   async getAssignedReferralCode(req, res) {
     try {

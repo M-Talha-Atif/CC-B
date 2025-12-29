@@ -5,7 +5,7 @@ const { initializeSocket } = require("./services/socketService");
 const { seedDatabase } = require("./utils/seedData");
 const http = require("http");
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 
 // Database connection test
 async function testConnection() {
@@ -37,7 +37,7 @@ async function startServer() {
     // Initialize cron jobs after database connection
     cronJobService.init();
 
-    server.listen(PORT, () => {
+    server.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 Server running on port ${PORT}`);
       console.log(`📱 API URL: http://localhost:${PORT}/api`);
       console.log(`💚 Health check: http://localhost:${PORT}/api/health`);

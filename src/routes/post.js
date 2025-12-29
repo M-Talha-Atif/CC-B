@@ -73,4 +73,10 @@ router.get("/comment-count/:postId", postController.getPostCommentCount);
 
 router.post("/comment/:commentId/like", postController.toggleCommentLike);
 
+// Report a post
+router.post("/:postId/report", postController.reportPost);
+
+// Check if user has reported a post
+router.get("/:postId/report/check", postController.checkUserReport);
+
 module.exports = router;

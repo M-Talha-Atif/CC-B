@@ -1340,6 +1340,29 @@ const AdminService = {
     try {
       const offset = (page - 1) * limit;
 
+      const conditions = [
+        eq(users.status, "approved"),
+        ne(users.userType, "admin"),
+      ];
+
+      if (search) {
+        const searchLower = search.toLowerCase();
+
+        conditions.push(
+          or(
+            sql`LOWER(${users.email}) LIKE ${`%${searchLower}%`}`,
+            sql`LOWER(${users.firstName}) LIKE ${`%${searchLower}%`}`,
+            sql`LOWER(${users.lastName}) LIKE ${`%${searchLower}%`}`,
+            sql`LOWER(${users.businessName}) LIKE ${`%${searchLower}%`}`,
+            sql`LOWER(${users.personalReferralCode}) LIKE ${`%${searchLower}%`}`,
+            sql`LOWER(${users.originalDataBackup}::text) LIKE ${`%${searchLower}%`}`
+          )
+        );
+      }
+
+      const whereClause = and(...conditions);
+
+
       let query = db
         .select({
           id: users.id,
@@ -1361,27 +1384,15 @@ const AdminService = {
           updatedAt: users.updatedAt,
         })
         .from(users)
-        .where(and(eq(users.status, "approved"), ne(users.userType, "admin")));
+        .where(whereClause);
 
-      // Add search conditions if search term provided
-      if (search) {
-        const searchLower = search.toLowerCase();
-        query = query.where(
-          or(
-            sql`LOWER(${users.email}) LIKE ${`%${searchLower}%`}`,
-            sql`LOWER(${users.firstName}) LIKE ${`%${searchLower}%`}`,
-            sql`LOWER(${users.lastName}) LIKE ${`%${searchLower}%`}`,
-            sql`LOWER(${users.businessName}) LIKE ${`%${searchLower}%`}`,
-            sql`LOWER(${users.personalReferralCode}) LIKE ${`%${searchLower}%`}`
-          )
-        );
-      }
+
 
       // Get total count for pagination
       const countQuery = await db
         .select({ count: sql`count(*)` })
         .from(users)
-        .where(and(eq(users.status, "approved"), ne(users.userType, "admin")));
+        .where(whereClause);
 
       const total = parseInt(countQuery[0].count);
 
@@ -1514,22 +1525,44 @@ const AdminService = {
   }) {
     try {
       const offset = (page - 1) * limit;
+      const conditions = [
+        ne(users.userType, "admin"),
+      ];
 
-      // Base query conditions
-      let statusCondition;
       if (status === "rejected") {
-        statusCondition = eq(users.status, "rejected");
+        conditions.push(eq(users.status, "rejected"));
       } else if (status === "referral_rejected") {
-        statusCondition = eq(users.status, "referral_rejected");
+        conditions.push(eq(users.status, "referral_rejected"));
       } else {
-        // "all" - get both rejected and referral_rejected
-        statusCondition = or(
-          eq(users.status, "rejected"),
-          eq(users.status, "referral_rejected")
+        conditions.push(
+          or(
+            eq(users.status, "rejected"),
+            eq(users.status, "referral_rejected")
+          )
         );
       }
 
-      let query = db
+
+      // Add search conditions if search term provided
+      if (search) {
+        const searchLower = search.toLowerCase();
+
+        conditions.push(
+          or(
+            sql`LOWER(${users.email}) LIKE ${`%${searchLower}%`}`,
+            sql`LOWER(${users.firstName}) LIKE ${`%${searchLower}%`}`,
+            sql`LOWER(${users.lastName}) LIKE ${`%${searchLower}%`}`,
+            sql`LOWER(${users.businessName}) LIKE ${`%${searchLower}%`}`,
+            sql`LOWER(${users.personalReferralCode}) LIKE ${`%${searchLower}%`}`,
+            sql`LOWER(${users.originalDataBackup}::text) LIKE ${`%${searchLower}%`}`
+          )
+        );
+      }
+
+      const whereClause = and(...conditions);
+
+
+       let query = db
         .select({
           id: users.id,
           email: users.email,
@@ -1550,27 +1583,15 @@ const AdminService = {
           updatedAt: users.updatedAt,
         })
         .from(users)
-        .where(and(statusCondition, ne(users.userType, "admin")));
+        .where(whereClause);
 
-      // Add search conditions if search term provided
-      if (search) {
-        const searchLower = search.toLowerCase();
-        query = query.where(
-          or(
-            sql`LOWER(${users.email}) LIKE ${`%${searchLower}%`}`,
-            sql`LOWER(${users.firstName}) LIKE ${`%${searchLower}%`}`,
-            sql`LOWER(${users.lastName}) LIKE ${`%${searchLower}%`}`,
-            sql`LOWER(${users.businessName}) LIKE ${`%${searchLower}%`}`,
-            sql`LOWER(${users.personalReferralCode}) LIKE ${`%${searchLower}%`}`
-          )
-        );
-      }
+
 
       // Get total count for pagination
       const countQuery = await db
         .select({ count: sql`count(*)` })
         .from(users)
-        .where(and(statusCondition, ne(users.userType, "admin")));
+        .where(whereClause);
 
       const total = parseInt(countQuery[0].count);
 

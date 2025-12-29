@@ -8,6 +8,7 @@ const {
   commentInteractions,
   chatroomIdentities,
   postRateLimits,
+  reportedPosts
 } = require("../models/schema");
 const {
   eq,
@@ -494,12 +495,10 @@ const PostController = {
                 inArray(posts.id, savedPostIds),
                 eq(posts.isActive, true),
                 or(
-                  sql`LOWER(${posts.subject}) LIKE LOWER(${
-                    "%" + searchTerm + "%"
-                  })`,
-                  sql`LOWER(${posts.content}) LIKE LOWER(${
-                    "%" + searchTerm + "%"
-                  })`
+                  sql`LOWER(${posts.subject}) LIKE LOWER(${"%" + searchTerm + "%"
+                    })`,
+                  sql`LOWER(${posts.content}) LIKE LOWER(${"%" + searchTerm + "%"
+                    })`
                 )
               )
             );
@@ -670,7 +669,7 @@ const PostController = {
                     percentage:
                       totalVotes > 0
                         ? Math.round((option.votes / totalVotes) * 100 * 10) /
-                          10
+                        10
                         : 0,
                     votes: option.votes || 0,
                     isUserChoice: false,
@@ -708,11 +707,11 @@ const PostController = {
             recentComment: null,
             chatroomData: post.commentsEnabled
               ? {
-                  timeRemaining: chatroomTimeRemaining,
-                  isActive: chatroomTimeRemaining > 0,
-                  activeMembers: 0,
-                  totalMessages: 0,
-                }
+                timeRemaining: chatroomTimeRemaining,
+                isActive: chatroomTimeRemaining > 0,
+                activeMembers: 0,
+                totalMessages: 0,
+              }
               : null,
             thresholdData: {
               timeRemaining: thresholdTimeRemaining,
@@ -1068,9 +1067,9 @@ const PostController = {
           pollOptions: formattedPollOptions,
           totalVotes: formattedPollOptions
             ? formattedPollOptions.reduce(
-                (sum, option) => sum + option.votes,
-                0
-              )
+              (sum, option) => sum + option.votes,
+              0
+            )
             : 0,
           timeAgo: getTimeAgo(post.createdAt),
           userDisplayName:
@@ -1090,11 +1089,11 @@ const PostController = {
           chatroomData:
             post.commentsEnabled && category !== "My Posts"
               ? {
-                  timeRemaining: chatroomTimeRemaining,
-                  isActive: chatroomTimeRemaining > 0,
-                  activeMembers: chatroomStats[post.id]?.activeMembers || 0,
-                  totalMessages: chatroomStats[post.id]?.totalMessages || 0,
-                }
+                timeRemaining: chatroomTimeRemaining,
+                isActive: chatroomTimeRemaining > 0,
+                activeMembers: chatroomStats[post.id]?.activeMembers || 0,
+                totalMessages: chatroomStats[post.id]?.totalMessages || 0,
+              }
               : null,
           thresholdData: {
             timeRemaining: thresholdTimeRemaining,
@@ -1334,9 +1333,9 @@ const PostController = {
           pollOptions: formattedPollOptions,
           totalVotes: formattedPollOptions
             ? formattedPollOptions.reduce(
-                (sum, option) => sum + option.votes,
-                0
-              )
+              (sum, option) => sum + option.votes,
+              0
+            )
             : 0,
           timeAgo: getTimeAgo(post.createdAt),
           userDisplayName:
@@ -1350,11 +1349,11 @@ const PostController = {
           recentComment: recentCommentsMap[post.id] || null,
           chatroomData: post.commentsEnabled
             ? {
-                timeRemaining: chatroomTimeRemaining,
-                isActive: chatroomTimeRemaining > 0,
-                activeMembers: 0,
-                totalMessages: 0,
-              }
+              timeRemaining: chatroomTimeRemaining,
+              isActive: chatroomTimeRemaining > 0,
+              activeMembers: 0,
+              totalMessages: 0,
+            }
             : null,
           thresholdData: {
             timeRemaining: thresholdTimeRemaining,
@@ -1407,8 +1406,7 @@ const PostController = {
       const offset = (page - 1) * limit;
 
       console.log(
-        `Global search - Query: "${searchQuery}", Page: ${page}, Limit: ${limit}, Sort: ${sortBy}, Categories: "${categories}", Auth: ${userAuthenticated}, UserId: ${
-          userId || "none"
+        `Global search - Query: "${searchQuery}", Page: ${page}, Limit: ${limit}, Sort: ${sortBy}, Categories: "${categories}", Auth: ${userAuthenticated}, UserId: ${userId || "none"
         }`
       );
 
@@ -1629,9 +1627,9 @@ const PostController = {
           pollOptions: formattedPollOptions,
           totalVotes: formattedPollOptions
             ? formattedPollOptions.reduce(
-                (sum, option) => sum + option.votes,
-                0
-              )
+              (sum, option) => sum + option.votes,
+              0
+            )
             : 0,
           timeAgo: getTimeAgo(post.createdAt),
           userDisplayName:
@@ -1655,11 +1653,11 @@ const PostController = {
           quotedPost: quotedPost,
           chatroomData: post.commentsEnabled
             ? {
-                timeRemaining: chatroomTimeRemaining,
-                isActive: chatroomTimeRemaining > 0,
-                activeMembers: 0, // Would need separate query for this
-                totalMessages: 0, // Would need separate query for this
-              }
+              timeRemaining: chatroomTimeRemaining,
+              isActive: chatroomTimeRemaining > 0,
+              activeMembers: 0, // Would need separate query for this
+              totalMessages: 0, // Would need separate query for this
+            }
             : null,
           thresholdData: {
             timeRemaining: thresholdTimeRemaining,
@@ -1695,9 +1693,9 @@ const PostController = {
         appliedFilters: {
           categories: categories
             ? categories
-                .split(",")
-                .map((cat) => cat.trim())
-                .filter((cat) => cat)
+              .split(",")
+              .map((cat) => cat.trim())
+              .filter((cat) => cat)
             : [],
           sortBy: sortBy,
         },
@@ -2571,11 +2569,11 @@ const PostController = {
           `${post.userFirstName} ${post.userLastName}`.trim(),
         chatroomData: post.commentsEnabled
           ? {
-              timeRemaining: calculateChatroomTimeRemaining(post),
-              isActive: calculateChatroomTimeRemaining(post) > 0,
-              activeMembers: chatroomStats.activeMembers,
-              totalMessages: chatroomStats.totalMessages,
-            }
+            timeRemaining: calculateChatroomTimeRemaining(post),
+            isActive: calculateChatroomTimeRemaining(post) > 0,
+            activeMembers: chatroomStats.activeMembers,
+            totalMessages: chatroomStats.totalMessages,
+          }
           : null,
       };
 
@@ -2777,6 +2775,146 @@ const PostController = {
         //     id: posts.id,
         //     subject: posts.subject
         //   });
+
+        return deletedPost[0];
+      });
+
+      res.status(200).json({
+        success: true,
+        message: "Post deleted successfully",
+        data: {
+          deletedPost: result,
+        },
+      });
+    } catch (error) {
+      console.error("Delete post error:", error);
+
+      // Handle specific error messages
+      if (error.message.includes("Post not found")) {
+        return res.status(404).json({
+          success: false,
+          message: "Post not found or already deleted",
+        });
+      }
+
+      if (error.message.includes("Unauthorized")) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only delete your own posts",
+        });
+      }
+
+      if (error.message.includes("deletion window has expired")) {
+        return res.status(400).json({
+          success: false,
+          message: "Post can only be deleted within 48 hours of creation",
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to delete post",
+        error:
+          process.env.NODE_ENV === "development"
+            ? error.message
+            : "Internal server error",
+      });
+    }
+  },
+
+  async deletePostByAdmin(req, res) {
+    try {
+      const { postId } = req.params;
+      const userId = req.user.id;
+
+      // Validate post ID
+      if (!postId || typeof postId !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid post ID",
+        });
+      }
+
+      // Start a transaction
+      const result = await db.transaction(async (tx) => {
+        // First, get the post to check ownership and creation time
+        const post = await tx
+          .select({
+            id: posts.id,
+            userId: posts.userId,
+            createdAt: posts.createdAt,
+            subject: posts.subject,
+            isActive: posts.isActive,
+          })
+          .from(posts)
+          .where(and(eq(posts.id, postId), eq(posts.isActive, true)))
+          .limit(1);
+
+        if (!post || post.length === 0) {
+          throw new Error("Post not found or already deleted");
+        }
+
+        const postData = post[0];
+
+        // // Check if user owns the post
+        // if (postData.userId !== userId) {
+        //   throw new Error("Unauthorized: You can only delete your own posts");
+        // }
+
+        // // Check if post is within 48-hour deletion window
+        // const now = new Date();
+        // const postCreatedAt = new Date(postData.createdAt);
+        // const fortyEightHours = 48 * 60 * 60 * 1000; // 48 hours in milliseconds
+        // const timePassed = now - postCreatedAt;
+
+        // if (timePassed > fortyEightHours) {
+        //   throw new Error("Post deletion window has expired (48 hours)");
+        // }
+
+        // Delete related records first (foreign key constraints)
+
+        // Delete poll votes
+        await tx.delete(pollVotes).where(eq(pollVotes.postId, postId));
+
+        // Delete post interactions (likes, saves)
+        await tx
+          .delete(postInteractions)
+          .where(eq(postInteractions.postId, postId));
+
+        // Delete comments and their interactions
+        // First get all comment IDs for this post
+        const postComments = await tx
+          .select({ id: comments.id })
+          .from(comments)
+          .where(eq(comments.postId, postId));
+
+        if (postComments.length > 0) {
+          const commentIds = postComments.map((comment) => comment.id);
+
+          // Delete comment interactions
+          for (const commentId of commentIds) {
+            await tx
+              .delete(commentInteractions)
+              .where(eq(commentInteractions.commentId, commentId));
+          }
+
+          // Delete comments
+          await tx.delete(comments).where(eq(comments.postId, postId));
+        }
+
+        // Finally, delete the post (soft delete by setting isActive to false)
+        // Or hard delete if preferred
+        const deletedPost = await tx
+          .update(posts)
+          .set({
+            isActive: false,
+            updatedAt: new Date(),
+          })
+          .where(eq(posts.id, postId))
+          .returning({
+            id: posts.id,
+            subject: posts.subject,
+          });
 
         return deletedPost[0];
       });
@@ -3838,6 +3976,342 @@ const PostController = {
       res.status(500).json({ error: "Failed to get chatroom username" });
     }
   },
+
+  async reportPost(req, res) {
+    try {
+      console.log("Hitting the reporting post");
+      const { postId } = req.params;
+      const userId = req.user.id;
+
+      // Check if post exists and get the post owner
+      const [post] = await db
+        .select({
+          id: posts.id,
+          isActive: posts.isActive,
+          userId: posts.userId // Get post owner
+        })
+        .from(posts)
+        .where(eq(posts.id, postId))
+        .limit(1);
+
+      if (!post || !post.isActive) {
+        return res.status(404).json({ error: "Post not found" });
+      }
+
+      // NEW: Check if user is trying to report their own post
+      if (post.userId === userId) {
+        return res.status(403).json({
+          error: "You cannot report your own post"
+        });
+      }
+
+      // Check if user already reported this post
+      const [existingReport] = await db
+        .select()
+        .from(reportedPosts)
+        .where(
+          and(
+            eq(reportedPosts.postId, postId),
+            eq(reportedPosts.reportedBy, userId)
+          )
+        )
+        .limit(1);
+
+      if (existingReport) {
+        return res.status(400).json({
+          error: "You have already reported this post"
+        });
+      }
+
+      // Create report and increment count in transaction
+      await db.transaction(async (tx) => {
+        // Insert report
+        await tx.insert(reportedPosts).values({
+          postId,
+          reportedBy: userId,
+        });
+
+        // Increment report count
+        await tx
+          .update(posts)
+          .set({
+            reportCount: sql`${posts.reportCount} + 1`,
+            updatedAt: new Date(),
+          })
+          .where(eq(posts.id, postId));
+      });
+
+      res.status(200).json({
+        success: true,
+        message: "Post reported successfully"
+      });
+    } catch (error) {
+      console.error("Error reporting post:", error);
+      res.status(500).json({ error: "Failed to report post" });
+    }
+  },
+
+  async checkUserReport(req, res) {
+    try {
+      const { postId } = req.params;
+      const userId = req.user.id;
+
+      // Check if post exists and get the post owner
+      const [post] = await db
+        .select({
+          id: posts.id,
+          userId: posts.userId
+        })
+        .from(posts)
+        .where(eq(posts.id, postId))
+        .limit(1);
+
+      if (!post) {
+        return res.status(404).json({ error: "Post not found" });
+      }
+
+      // NEW: If user owns the post, return special status
+      if (post.userId === userId) {
+        return res.json({
+          hasReported: false,
+          isOwnPost: true // Flag to indicate this is user's own post
+        });
+      }
+
+      // Check if user has reported this post
+      const [report] = await db
+        .select({ id: reportedPosts.id })
+        .from(reportedPosts)
+        .where(
+          and(
+            eq(reportedPosts.postId, postId),
+            eq(reportedPosts.reportedBy, userId)
+          )
+        )
+        .limit(1);
+
+      res.json({
+        hasReported: !!report,
+        isOwnPost: false
+      });
+    } catch (error) {
+      console.error("Error checking report status:", error);
+      res.status(500).json({ error: "Failed to check report status" });
+    }
+  },
+
+
+  async getReportedPosts(req, res) {
+    const requestId = Date.now(); // simple trace id
+
+    try {
+      const {
+        category = "New",
+        page = 1,
+        limit = 10,
+        sortBy = "reportCount",
+      } = req.query;
+
+      const pageNum = parseInt(page);
+      const limitNum = parseInt(limit);
+      const offset = (pageNum - 1) * limitNum;
+
+      console.log(`[${requestId}] 🚀 getReportedPosts called`, {
+        category,
+        page: pageNum,
+        limit: limitNum,
+        sortBy,
+      });
+
+      // Base condition
+      let whereCondition = and(
+        eq(posts.isActive, true),
+        gt(posts.reportCount, 0)
+      );
+
+      console.log(`[${requestId}] 🔎 Base filter: active posts with reports`);
+
+      // Category filters
+      if (category === "New") {
+        whereCondition = and(whereCondition, eq(posts.thresholdMet, false));
+        console.log(`[${requestId}] 🆕 Category filter: New (threshold not met)`);
+      } else if (category === "Popular") {
+        whereCondition = and(
+          whereCondition,
+          eq(posts.thresholdMet, true),
+          gte(posts.likes, 3)
+        );
+        console.log(
+          `[${requestId}] 🔥 Category filter: Popular (threshold met + likes >= 3)`
+        );
+      } else {
+        console.warn(
+          `[${requestId}] ⚠️ Unknown category received`,
+          category
+        );
+      }
+
+      // Sort order
+      let orderBy;
+      switch (sortBy) {
+        case "newest":
+          orderBy = desc(posts.createdAt);
+          break;
+        case "oldest":
+          orderBy = asc(posts.createdAt);
+          break;
+        case "likes":
+          orderBy = desc(posts.likes);
+          break;
+        case "reportCount":
+        default:
+          orderBy = desc(posts.reportCount);
+          break;
+      }
+
+      console.log(`[${requestId}] ↕️ Sorting by`, sortBy);
+
+      // Total count
+      const totalCountQuery = await db
+        .select({ count: sql`COUNT(*)`.as("count") })
+        .from(posts)
+        .where(whereCondition);
+
+      const totalCount = parseInt(totalCountQuery[0]?.count || 0);
+
+      console.log(`[${requestId}] 📊 Total matching posts:`, totalCount);
+
+      // Main query
+      const reportedPosts = await db
+        .select({
+          id: posts.id,
+          subject: posts.subject,
+          content: posts.content,
+          categories: posts.categories,
+          type: posts.type,
+          pollOptions: posts.pollOptions,
+          likes: posts.likes,
+          saves: posts.saves,
+          commentsCount: posts.commentsCount,
+          createdAt: posts.createdAt,
+          thresholdMet: posts.thresholdMet,
+          thresholdMetAt: posts.thresholdMetAt,
+          reportCount: posts.reportCount,
+          userId: posts.userId,
+          userFirstName: users.firstName,
+          userLastName: users.lastName,
+          userBusinessName: users.businessName,
+          userProfilePicture: users.profilePicture,
+          isQuotePost: posts.isQuotePost,
+          quotedPostId: posts.quotedPostId,
+          quotedPostSnapshot: posts.quotedPostSnapshot,
+          quotesCount: posts.quotesCount,
+          commentsEnabled: posts.commentsEnabled,
+          commentsEnabledAt: posts.commentsEnabledAt,
+          commentsDisabledAt: posts.commentsDisabledAt,
+        })
+        .from(posts)
+        .leftJoin(users, eq(posts.userId, users.id))
+        .where(whereCondition)
+        .orderBy(orderBy)
+        .limit(limitNum)
+        .offset(offset);
+
+      console.log(
+        `[${requestId}] 📥 Fetched posts count:`,
+        reportedPosts.length
+      );
+
+      if (reportedPosts.length === 0) {
+        console.warn(`[${requestId}] ⚠️ No posts found for given filters`);
+        return res.json({
+          posts: [],
+          pagination: {
+            page: pageNum,
+            limit: limitNum,
+            hasMore: false,
+            total: totalCount,
+          },
+        });
+      }
+
+      // Format posts
+      const formattedPosts = reportedPosts.map((post) => {
+        let quotedPost = null;
+
+        if (post.isQuotePost && post.quotedPostSnapshot) {
+          try {
+            quotedPost =
+              typeof post.quotedPostSnapshot === "string"
+                ? JSON.parse(post.quotedPostSnapshot)
+                : post.quotedPostSnapshot;
+          } catch (err) {
+            console.error(
+              `[${requestId}] ❌ Failed to parse quoted post snapshot`,
+              {
+                postId: post.id,
+                error: err,
+              }
+            );
+          }
+        }
+
+        return {
+          id: post.id,
+          subject: post.subject,
+          content: post.content,
+          categories: post.categories,
+          type: post.type,
+          likes: post.likes,
+          saves: post.saves,
+          commentsCount: post.commentsCount || 0,
+          quotesCount: post.quotesCount || 0,
+          reportCount: post.reportCount || 0,
+          createdAt: post.createdAt,
+          timeAgo: getTimeAgo(post.createdAt),
+          thresholdMet: post.thresholdMet,
+          thresholdMetAt: post.thresholdMetAt,
+          userId: post.userId,
+          userDisplayName:
+            post.userBusinessName ||
+            `${post.userFirstName} ${post.userLastName}`.trim(),
+          userProfilePicture: post.userProfilePicture,
+          isQuotePost: post.isQuotePost || false,
+          quotedPostId: post.quotedPostId,
+          quotedPostSnapshot: quotedPost,
+          commentsEnabled: post.commentsEnabled,
+        };
+      });
+
+      const hasMore = offset + reportedPosts.length < totalCount;
+
+      console.log(`[${requestId}] ✅ Response ready`, {
+        returned: formattedPosts.length,
+        hasMore,
+      });
+
+      res.json({
+        success: true,
+        posts: formattedPosts,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          hasMore,
+          total: totalCount,
+        },
+        category,
+      });
+    } catch (error) {
+      console.error(`[${requestId}] 💥 Error fetching reported posts`, error);
+      res.status(500).json({
+        success: false,
+        error: "Failed to fetch reported posts",
+      });
+    }
+  }
+
 };
+
+
 
 module.exports = PostController;
