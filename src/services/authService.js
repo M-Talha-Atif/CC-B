@@ -269,9 +269,11 @@ const authService = {
         .limit(1);
 
       if (existingUsage.length > 0) {
+        console.log("Already processed")
         return {
           isValid: true,
           alreadyUsed: true,
+          referralCode: code, // returning code for ui show
           message: "Referral code already processed",
         };
       }
@@ -287,9 +289,11 @@ const authService = {
         userOnboardingProgress.length > 0 &&
         userOnboardingProgress[0].referralCodeCompleted
       ) {
+        console.log("Referral Step already completed")
         return {
           isValid: true,
           alreadyUsed: true,
+          referralCode: userOnboardingProgress[0].formData?.referralCode || code,
           message: "Referral step already completed",
         };
       }
@@ -1036,7 +1040,7 @@ const authService = {
   async checkInstagramExists(instagram) {
     try {
       
-      const cleanInstagram = instagram;
+      const cleanInstagram = instagram.toLowerCase();
 
       console.log("Incoming Instagram:", cleanInstagram);
 
@@ -1115,7 +1119,6 @@ const authService = {
   }
 
   ,
-
 
 };
 

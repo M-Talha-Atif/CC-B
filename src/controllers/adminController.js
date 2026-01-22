@@ -687,7 +687,7 @@ const AdminController = {
         const currentCount = Number(activeUsageCount[0].count);
         const REFERRAL_LIMIT = 7;
 
-        if (currentCount >= REFERRAL_LIMIT) {
+        if (pendingReferral.codeType === "user" && currentCount >= REFERRAL_LIMIT) {
           // Get user info before rejection
           const [user] = await db
             .select()
@@ -713,61 +713,6 @@ const AdminController = {
             })
             .where(eq(users.id, userId));
 
-          // Send rejection email
-          // await emailService.sendEmail(
-          //   user.email,
-          //   "Referral Code Limit Reached - CUNO COVO",
-          //   `
-          // <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          //   <div style="text-align: center; margin-bottom: 30px;">
-          //     <h1 style="color: #333; margin: 0;">CUNO COVO</h1>
-          //   </div>
-
-          //   <div style="background-color: #fff5f5; padding: 30px; border-radius: 8px; margin-bottom: 30px; border-left: 4px solid #dc3545;">
-          //     <h2 style="color: #333; margin-top: 0; text-align: center;">Referral Code Limit Reached</h2>
-          //     <p style="color: #666; line-height: 1.6; text-align: center;">
-          //       Unfortunately, the referral code you used has reached its maximum number of allowed referrals
-          //       and can no longer be used for new registrations.
-          //     </p>
-          //   </div>
-
-          //   <div style="background-color: #f9f9f9; padding: 20px; border-radius: 8px; margin-bottom: 30px;">
-          //     <h3 style="color: #333; margin-top: 0;">What This Means</h3>
-          //     <p style="color: #666; line-height: 1.6;">
-          //       Each referral code has a limit of 7 users to ensure fair distribution and quality control.
-          //       The code you used has already reached this limit.
-          //     </p>
-          //   </div>
-
-          //   <div style="background-color: #f9f9f9; padding: 20px; border-radius: 8px; margin-bottom: 30px;">
-          //     <h3 style="color: #333; margin-top: 0;">How to Proceed</h3>
-          //     <p style="color: #666; line-height: 1.6;">
-          //       To continue your registration with CUNO COVO, please reply to this email to request a new valid referral code.
-          //       Our team will provide you with an active code so you can complete your registration and sign up again.
-          //     </p>
-          //   </div>
-
-          //   <div style="text-align: center; margin: 30px 0;">
-          //     <p style="color: #666; margin: 0;">
-          //       We appreciate your interest in joining CUNO COVO and look forward to having you in our community.
-          //     </p>
-          //   </div>
-
-          //   <div style="border-top: 1px solid #eee; padding-top: 20px;">
-          //     <p style="color: #999; font-size: 12px; text-align: center;">
-          //       If you have any questions, please don't hesitate to reach out to our support team.
-          //     </p>
-          //   </div>
-
-          //   <div style="text-align: center; margin-top: 30px;">
-          //     <p style="color: #666; margin: 0;">
-          //       Best regards,<br>
-          //       The CUNO COVO Team
-          //     </p>
-          //   </div>
-          // </div>
-          // `
-          // );
 
           await emailService.sendEmail(
             user.email,
@@ -816,14 +761,21 @@ const AdminController = {
           return pointsMap[num] || 1.5;
         };
 
-        const pointsToCodeOwner =
-          pendingReferral.codeType === "user"
-            ? calculatePoints(referralNumber)
-            : pendingReferral.codeOwnerId
-            ? 1
-            : 0;
-        const pointsToUser = 1;
-        const pointsToAdmin = pendingReferral.codeType === "admin" ? 0.5 : 0;
+        // Point distribution logic
+        let pointsToCodeOwner, pointsToUser, pointsToAdmin;
+
+        if (pendingReferral.codeType === "user") {
+          // User personal code
+          pointsToCodeOwner = calculatePoints(referralNumber);
+          pointsToUser = 1;
+          pointsToAdmin = 0;
+        } else {
+          // Admin code
+          pointsToUser = 1; // Always give 1 point to the new user
+          pointsToAdmin = pendingReferral.codeOwnerId ? 0.5 : 1; // 0.5 if assigned, 1 if unassigned
+          pointsToCodeOwner = pendingReferral.codeOwnerId ? 1 : 0; // 1 point to code owner if assigned
+        }
+
 
         // Get current balances
         const [currentUser] = await db
@@ -861,23 +813,23 @@ const AdminController = {
           // Give points to code owner if exists
           pendingReferral.codeOwnerId && pointsToCodeOwner > 0
             ? db
-                .update(users)
-                .set({
-                  points: sql`${users.points} + ${pointsToCodeOwner}`,
-                  updatedAt: new Date(),
-                })
-                .where(eq(users.id, pendingReferral.codeOwnerId))
+              .update(users)
+              .set({
+                points: sql`${users.points} + ${pointsToCodeOwner}`,
+                updatedAt: new Date(),
+              })
+              .where(eq(users.id, pendingReferral.codeOwnerId))
             : Promise.resolve(),
 
           // Give points to admin if applicable
           pendingReferral.adminCreatorId && pointsToAdmin > 0
             ? db
-                .update(users)
-                .set({
-                  points: sql`${users.points} + ${pointsToAdmin}`,
-                  updatedAt: new Date(),
-                })
-                .where(eq(users.id, pendingReferral.adminCreatorId))
+              .update(users)
+              .set({
+                points: sql`${users.points} + ${pointsToAdmin}`,
+                updatedAt: new Date(),
+              })
+              .where(eq(users.id, pendingReferral.adminCreatorId))
             : Promise.resolve(),
 
           // Insert points transactions
@@ -893,25 +845,25 @@ const AdminController = {
             },
             ...(pendingReferral.codeOwnerId && pointsToCodeOwner > 0
               ? [
-                  {
-                    userId: pendingReferral.codeOwnerId,
-                    amount: pointsToCodeOwner,
-                    type: "referral_bonus",
-                    referralUsageId: pendingReferral.id,
-                    description: `Referral bonus (level ${referralNumber})`,
-                  },
-                ]
+                {
+                  userId: pendingReferral.codeOwnerId,
+                  amount: pointsToCodeOwner,
+                  type: "referral_bonus",
+                  referralUsageId: pendingReferral.id,
+                  description: `Referral bonus (level ${referralNumber})`,
+                },
+              ]
               : []),
             ...(pendingReferral.adminCreatorId && pointsToAdmin > 0
               ? [
-                  {
-                    userId: pendingReferral.adminCreatorId,
-                    amount: pointsToAdmin,
-                    type: "admin_bonus",
-                    referralUsageId: pendingReferral.id,
-                    description: "Admin bonus for code creation",
-                  },
-                ]
+                {
+                  userId: pendingReferral.adminCreatorId,
+                  amount: pointsToAdmin,
+                  type: "admin_bonus",
+                  referralUsageId: pendingReferral.id,
+                  description: "Admin bonus for code creation",
+                },
+              ]
               : []),
           ]),
         ]);

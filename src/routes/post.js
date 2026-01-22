@@ -31,6 +31,11 @@ router.use(handleAnonymousUser);
 // Create new post
 router.post("/", postController.createPost);
 
+router.get(
+  "/reported-content",
+  postController.getUnifiedReportedContent
+);
+
 router.get("/quote/:postId", postController.getPostForQuote);
 
 router.get(
@@ -51,6 +56,13 @@ router.post("/:postId/vote", postController.votePoll);
 
 router.get("/:postId", postController.getPost);
 router.delete("/:postId", postController.deletePost);
+
+
+// Report a post
+router.post("/:postId/report", postController.reportPost);
+
+// Check if user has reported a post
+router.get("/:postId/report/check", postController.checkUserReport);
 
 // Get user's saved posts
 router.get("/saved", postController.getSavedPosts);
@@ -73,10 +85,16 @@ router.get("/comment-count/:postId", postController.getPostCommentCount);
 
 router.post("/comment/:commentId/like", postController.toggleCommentLike);
 
-// Report a post
-router.post("/:postId/report", postController.reportPost);
 
-// Check if user has reported a post
-router.get("/:postId/report/check", postController.checkUserReport);
+// Comment reporting routes
+router.post("/comment/:commentId/report", postController.reportComment);
+router.get("/comment/:commentId/report/check", postController.checkUserCommentReport);
+
+
+
+router.delete(
+  "/comment/:commentId",
+  postController.deleteCommentByAdmin
+);
 
 module.exports = router;

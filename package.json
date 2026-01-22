@@ -17,9 +17,12 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@plunk/node": "^3.0.3",
+    "@sentry/node": "^10.32.1",
     "@supabase/supabase-js": "^2.50.0",
     "axios": "^1.10.0",
     "bcrypt": "^6.0.0",
+    "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",

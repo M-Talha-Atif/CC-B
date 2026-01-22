@@ -4,11 +4,13 @@ const {
   postInteractions,
   pollVotes,
   users,
+  notifications,
   comments,
   commentInteractions,
   chatroomIdentities,
   postRateLimits,
-  reportedPosts
+  reportedPosts,
+  reportedComments,
 } = require("../models/schema");
 const {
   eq,
@@ -1946,7 +1948,10 @@ const PostController = {
         .limit(1);
 
       if (currentPost.length === 0) {
-        return res.status(404).json({ error: "Post not found" });
+        return res.status(404).json({
+          success: false,
+          error: "Post not found"
+        });
       }
 
       const post = currentPost[0];
@@ -1967,14 +1972,14 @@ const PostController = {
       const isCurrentlyLiked = existing.length > 0;
 
       if (isCurrentlyLiked) {
-        // UNLIKE LOGIC
+        // ============ UNLIKE LOGIC ============
         const newLikes = post.likes - 1;
 
         // CRITICAL CHECK: Prevent unliking if this would break the threshold
         if (post.thresholdMet && newLikes < 1) {
           return res.status(400).json({
-            error:
-              "Cannot unlike - this would cause the post to lose its threshold status",
+            success: false,
+            error: "Cannot unlike - this would cause the post to lose its threshold status",
             message: "Action not permitted",
             canUnlike: false,
           });
@@ -1993,22 +1998,31 @@ const PostController = {
           })
           .where(eq(posts.id, postId));
 
-        // NO NOTIFICATION ON UNLIKE
+        // Use transaction
+        // await db.transaction(async (tx) => {
 
-        res.json({
+
+
+        //   // FIXED: Use sql instead of sq
+        //   await tx
+        //     .update(users)
+        //     .set({
+        //       likedPostsCount: sql`GREATEST(COALESCE(${users.likedPostsCount}, 0) - 1, 0)`,
+        //     })
+        //     .where(eq(users.id, userId));
+        // });
+
+        console.log("Post un Liked")
+
+        return res.json({
+          success: true,
           liked: false,
           message: "Post unliked",
           likes: newLikes,
           canUnlike: true,
         });
       } else {
-        // LIKE LOGIC
-        await db.insert(postInteractions).values({
-          userId,
-          postId,
-          type: "like",
-        });
-
+        // ============ LIKE LOGIC ============
         const newLikes = post.likes + 1;
         const postCreatedAt = new Date(post.createdAt);
         const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
@@ -2028,7 +2042,7 @@ const PostController = {
           updateData.thresholdMetAt = new Date();
           thresholdJustMet = true;
           console.log(
-            `🎯 INSTANT: Threshold met for post ${postId} (${newLikes}/1 likes)`
+            `INSTANT: Threshold met for post ${postId} (${newLikes}/1 likes)`
           );
         }
 
@@ -2038,25 +2052,38 @@ const PostController = {
           updateData.commentsEnabledAt = new Date();
           commentsJustEnabled = true;
           console.log(
-            `💬 INSTANT: Comments enabled for post ${postId} (${newLikes} likes)`
+            `INSTANT: Comments enabled for post ${postId} (${newLikes} likes)`
           );
         }
 
+        await db.insert(postInteractions).values({
+          userId,
+          postId,
+          type: "like",
+        });
+
+
         await db.update(posts).set(updateData).where(eq(posts.id, postId));
 
-        // === NOTIFICATION LOGIC - ONLY ON LIKE ===
-        // Don't notify if user is liking their own post
-        // if (post.userId !== userId) {
-        //   const NotificationService = require("../services/notificationService");
-        //   await NotificationService.notifyPostLike(
-        //     post.userId,
-        //     userId,
-        //     postId,
-        //     post.subject
-        //   );
-        // }
+        //  Use transaction
+        // await db.transaction(async (tx) => {
 
-        res.json({
+
+
+
+
+        //   await tx
+        //     .update(users)
+        //     .set({
+        //       likedPostsCount: sql`COALESCE(${users.likedPostsCount}, 0) + 1`,
+        //     })
+        //     .where(eq(users.id, userId));
+        // });
+
+        console.log("Post Liked")
+
+        return res.json({
+          success: true,
           liked: true,
           message: "Post liked",
           likes: newLikes,
@@ -2069,7 +2096,20 @@ const PostController = {
       }
     } catch (error) {
       console.error("Error toggling like:", error);
-      res.status(500).json({ error: "Failed to toggle like" });
+
+      // Handle duplicate like gracefully (idempotency)
+      if (error.cause?.code === "23505") {
+        return res.status(400).json({
+          success: false,
+          error: "You have already liked this post",
+          liked: true,
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        error: "Failed to toggle like"
+      });
     }
   },
 
@@ -2077,7 +2117,6 @@ const PostController = {
     try {
       const userId = req.userData.id;
 
-      // Count how many posts the user has liked
       const likeCount = await db
         .select({ count: sql`count(*)` })
         .from(postInteractions)
@@ -2091,12 +2130,21 @@ const PostController = {
       const totalLikes = parseInt(likeCount[0].count) || 0;
       const canPost = totalLikes >= 5;
 
+
+      // const [user] = await db
+      //   .select({ likedPostsCount: users.likedPostsCount })
+      //   .from(users)
+      //   .where(eq(users.id, userId));
+
+      // const canPost = user.likedPostsCount >= 5;
+
+
       return res.json({
         success: true,
         canPost,
-        likesCount: totalLikes,
+        likesCount: likeCount,
         likesRequired: 5,
-        likesRemaining: Math.max(0, 5 - totalLikes),
+        likesRemaining: Math.max(0, 5 - likeCount),
       });
     } catch (error) {
       console.error("Error checking posting eligibility:", error);
@@ -3157,6 +3205,7 @@ const PostController = {
           userId: posts.userId,
           subject: posts.subject,
           commentsEnabled: posts.commentsEnabled,
+          categories: posts.categories,
           commentsEnabledAt: posts.commentsEnabledAt,
           openedBy: posts.openedBy,
           openedByUsername: posts.openedByUsername,
@@ -3283,14 +3332,18 @@ const PostController = {
 
       // === NOTIFICATION LOGIC ===
 
-      // 1. Notify post owner about the comment (if commenter is not the post owner)
-      if (post.userId !== userId) {
+      // 1. Notify post owner about the comment (if commenter is not the post owner) and also it is not a reply
+      if (!parentCommentId && post.userId !== userId) {
         await NotificationService.notifyPostComment(
           post.userId,
           userId,
           postId,
           content.trim(),
-          post.subject
+          {
+            subject: post.subject,
+            categories: post.categories,
+
+          }
         );
       }
 
@@ -3306,7 +3359,11 @@ const PostController = {
           result.newComment.id,
           parentCommentId,
           postId,
-          content.trim()
+          content.trim(), // reply content
+          {
+            subject: post.subject,
+            categories: post.categories
+          }
         );
       }
 
@@ -3476,19 +3533,6 @@ const PostController = {
           .json({ error: "Comments are no longer enabled for this post" });
       }
 
-      // Check if comment period has expired
-      // if (post.commentsEnabledAt) {
-      //   const enabledAt = new Date(post.commentsEnabledAt);
-      //   const expiresAt = new Date(enabledAt.getTime() + 48 * 60 * 60 * 1000); // 48 hours
-
-      //   if (now > expiresAt) {
-      //     return res.status(403).json({
-      //       error: "Comment period has expired",
-      //       message:
-      //         "Comments are only available for 48 hours after being enabled",
-      //     });
-      //   }
-      // }
 
       // Update the comment
       const [updatedComment] = await db
@@ -3604,6 +3648,34 @@ const PostController = {
         await tx
           .delete(commentInteractions)
           .where(eq(commentInteractions.commentId, commentId));
+
+
+        //  Delete notifications related to this comment
+        // This includes:
+        // - Notifications where this comment is the subject (comment_like, comment_reply)
+        // - Notifications where this comment is a reply to another comment
+        await tx
+          .delete(notifications)
+          .where(
+            or(
+              eq(notifications.commentId, commentId),
+              eq(notifications.parentCommentId, commentId)
+            )
+          );
+
+        // If this is a reply, also delete notifications where actorId is the commenter
+        // and the parent comment is referenced (for comment_reply notifications)
+        if (comment.parentCommentId) {
+          await tx
+            .delete(notifications)
+            .where(
+              and(
+                eq(notifications.actorId, userId),
+                eq(notifications.parentCommentId, comment.parentCommentId),
+                eq(notifications.type, "comment_reply")
+              )
+            );
+        }
 
         // Update post comments count
         await tx
@@ -3869,10 +3941,16 @@ const PostController = {
           userId: comments.userId,
           postId: comments.postId,
           content: comments.content,
+          // join with posts for meta data in notification
+          postSubject: posts.subject,
+          postCategories: posts.categories,
+          commentsCount: posts.commentsCount,
         })
         .from(comments)
+        .leftJoin(posts, eq(comments.postId, posts.id))
         .where(eq(comments.id, commentId))
         .limit(1);
+
 
       if (!comment) {
         return res.status(404).json({ error: "Comment not found" });
@@ -3923,8 +4001,15 @@ const PostController = {
             comment.userId,
             userId,
             commentId,
-            comment.postId
+            comment.postId,
+            // post
+            {
+              subject: comment.postSubject,
+              categories: comment.postCategories,
+              commentsCount: comment.commentsCount,
+            }
           );
+
         }
 
         res.json({ liked: true, message: "Comment liked" });
@@ -4025,6 +4110,8 @@ const PostController = {
 
       // Create report and increment count in transaction
       await db.transaction(async (tx) => {
+
+        const now = new Date(); //  define now variable
         // Insert report
         await tx.insert(reportedPosts).values({
           postId,
@@ -4036,6 +4123,7 @@ const PostController = {
           .update(posts)
           .set({
             reportCount: sql`${posts.reportCount} + 1`,
+            latestReportAt: now, // track latest report time
             updatedAt: new Date(),
           })
           .where(eq(posts.id, postId));
@@ -4100,7 +4188,6 @@ const PostController = {
     }
   },
 
-
   async getReportedPosts(req, res) {
     const requestId = Date.now(); // simple trace id
 
@@ -4109,7 +4196,7 @@ const PostController = {
         category = "New",
         page = 1,
         limit = 10,
-        sortBy = "reportCount",
+        sortBy = "reportTime",
       } = req.query;
 
       const pageNum = parseInt(page);
@@ -4139,7 +4226,7 @@ const PostController = {
         whereCondition = and(
           whereCondition,
           eq(posts.thresholdMet, true),
-          gte(posts.likes, 3)
+          gte(posts.likes, 1)
         );
         console.log(
           `[${requestId}] 🔥 Category filter: Popular (threshold met + likes >= 3)`
@@ -4162,6 +4249,9 @@ const PostController = {
           break;
         case "likes":
           orderBy = desc(posts.likes);
+          break;
+        case "reportTime":
+          orderBy = desc(posts.latestReportAt);
           break;
         case "reportCount":
         default:
@@ -4194,6 +4284,7 @@ const PostController = {
           saves: posts.saves,
           commentsCount: posts.commentsCount,
           createdAt: posts.createdAt,
+          latestReportAt: posts.latestReportAt,
           thresholdMet: posts.thresholdMet,
           thresholdMetAt: posts.thresholdMetAt,
           reportCount: posts.reportCount,
@@ -4209,6 +4300,11 @@ const PostController = {
           commentsEnabled: posts.commentsEnabled,
           commentsEnabledAt: posts.commentsEnabledAt,
           commentsDisabledAt: posts.commentsDisabledAt,
+          earliestReportAt: sql`(
+      SELECT MIN(created_at) 
+      FROM reported_posts 
+      WHERE reported_posts.post_id = ${posts.id}
+    )`.as('earliest_report_at'),
         })
         .from(posts)
         .leftJoin(users, eq(posts.userId, users.id))
@@ -4262,8 +4358,10 @@ const PostController = {
           content: post.content,
           categories: post.categories,
           type: post.type,
+          pollOptions: post.pollOptions,
           likes: post.likes,
           saves: post.saves,
+          latestReportAt: post.latestReportAt,
           commentsCount: post.commentsCount || 0,
           quotesCount: post.quotesCount || 0,
           reportCount: post.reportCount || 0,
@@ -4280,6 +4378,7 @@ const PostController = {
           quotedPostId: post.quotedPostId,
           quotedPostSnapshot: quotedPost,
           commentsEnabled: post.commentsEnabled,
+          earliestReportAt: post.earliestReportAt,
         };
       });
 
@@ -4308,7 +4407,827 @@ const PostController = {
         error: "Failed to fetch reported posts",
       });
     }
-  }
+  },
+
+  async reportComment(req, res) {
+    try {
+      console.log("Hitting the reporting comment");
+      const { commentId } = req.params;
+      const userId = req.user.id;
+
+      // Check if comment exists and get the comment owner
+      const [comment] = await db
+        .select({
+          id: comments.id,
+          isActive: comments.isActive,
+          userId: comments.userId,
+          postId: comments.postId,
+        })
+        .from(comments)
+        .where(eq(comments.id, commentId))
+        .limit(1);
+
+      if (!comment || !comment.isActive) {
+        return res.status(404).json({ error: "Comment not found" });
+      }
+
+      // Check if user is trying to report their own comment
+      if (comment.userId === userId) {
+        return res.status(403).json({
+          error: "You cannot report your own comment"
+        });
+      }
+
+      // Check if user already reported this comment
+      const [existingReport] = await db
+        .select()
+        .from(reportedComments)
+        .where(
+          and(
+            eq(reportedComments.commentId, commentId),
+            eq(reportedComments.reportedBy, userId)
+          )
+        )
+        .limit(1);
+
+      if (existingReport) {
+        return res.status(400).json({
+          error: "You have already reported this comment"
+        });
+      }
+
+      // Create report and increment count in transaction
+      await db.transaction(async (tx) => {
+        const now = new Date();
+
+        // Insert report
+        await tx.insert(reportedComments).values({
+          commentId,
+          reportedBy: userId,
+          createdAt: now,
+        });
+
+        // Increment report count and update latestReportAt
+        await tx
+          .update(comments)
+          .set({
+            reportCount: sql`${comments.reportCount} + 1`,
+            latestReportAt: now,
+          })
+          .where(eq(comments.id, commentId));
+      });
+
+      res.status(200).json({
+        success: true,
+        message: "Comment reported successfully"
+      });
+    } catch (error) {
+      console.error("Error reporting comment:", error);
+      res.status(500).json({ error: "Failed to report comment" });
+    }
+  },
+
+  async checkUserCommentReport(req, res) {
+    try {
+      console.log("Checking the user comment for reporting")
+      const { commentId } = req.params;
+      const userId = req.user.id;
+
+      // Check if comment exists and get the comment owner
+      const [comment] = await db
+        .select({
+          id: comments.id,
+          userId: comments.userId
+        })
+        .from(comments)
+        .where(eq(comments.id, commentId))
+        .limit(1);
+
+      if (!comment) {
+        return res.status(404).json({ error: "Comment not found" });
+      }
+
+      // If user owns the comment, return special status
+      if (comment.userId === userId) {
+        return res.json({
+          hasReported: false,
+          isOwnComment: true
+        });
+      }
+
+      // Check if user has reported this comment
+      const [report] = await db
+        .select({ id: reportedComments.id })
+        .from(reportedComments)
+        .where(
+          and(
+            eq(reportedComments.commentId, commentId),
+            eq(reportedComments.reportedBy, userId)
+          )
+        )
+        .limit(1);
+
+      res.json({
+        hasReported: !!report,
+        isOwnComment: false
+      });
+
+      console.log("Response returned !!!")
+    } catch (error) {
+      console.error("Error checking comment report status:", error);
+      res.status(500).json({ error: "Failed to check report status" });
+    }
+  },
+  async getReportedComments(req, res) {
+    try {
+      const { postId } = req.params;
+      const { page = 1, limit = 50 } = req.query;
+      const pageNum = parseInt(page);
+      const limitNum = parseInt(limit);
+      const offset = (pageNum - 1) * limitNum;
+
+      // Get reported comments for this post, ordered by earliest report first
+      const reportedComments = await db
+        .select({
+          commentId: reportedComments.commentId,
+          commentContent: comments.content,
+          commentCreatedAt: comments.createdAt,
+          commentLikes: comments.likes,
+          commentReportCount: comments.reportCount,
+          commentLatestReportAt: comments.latestReportAt,
+          commentUserId: comments.userId,
+          commentChatroomUsername: comments.chatroomUsername,
+          parentCommentId: comments.parentCommentId,
+          isActive: comments.isActive,
+          // Get earliest report time for this comment
+          earliestReportAt: sql`(
+          SELECT MIN(created_at) 
+          FROM reported_comments 
+          WHERE reported_comments.comment_id = ${comments.id}
+        )`.as('earliest_report_at'),
+        })
+        .from(reportedComments)
+        .innerJoin(comments, eq(reportedComments.commentId, comments.id))
+        .where(
+          and(
+            eq(comments.postId, postId),
+            eq(comments.isActive, true),
+            gt(comments.reportCount, 0)
+          )
+        )
+        .groupBy(
+          reportedComments.commentId,
+          comments.id,
+          comments.content,
+          comments.createdAt,
+          comments.likes,
+          comments.reportCount,
+          comments.latestReportAt,
+          comments.userId,
+          comments.chatroomUsername,
+          comments.parentCommentId,
+          comments.isActive
+        )
+        .orderBy(asc(sql`earliest_report_at`)) // Earliest reported first
+        .limit(limitNum)
+        .offset(offset);
+
+      // Get total count
+      const totalCountQuery = await db
+        .select({ count: sql`COUNT(DISTINCT ${reportedComments.commentId})`.as('count') })
+        .from(reportedComments)
+        .innerJoin(comments, eq(reportedComments.commentId, comments.id))
+        .where(
+          and(
+            eq(comments.postId, postId),
+            eq(comments.isActive, true),
+            gt(comments.reportCount, 0)
+          )
+        );
+
+      const totalCount = parseInt(totalCountQuery[0]?.count || 0);
+
+      // Format comments
+      const formattedComments = reportedComments.map(comment => ({
+        id: comment.commentId,
+        content: comment.commentContent,
+        createdAt: comment.commentCreatedAt,
+        likes: comment.commentLikes,
+        reportCount: comment.commentReportCount,
+        latestReportAt: comment.commentLatestReportAt,
+        earliestReportAt: comment.earliestReportAt,
+        userId: comment.commentUserId,
+        chatroomUsername: comment.commentChatroomUsername,
+        parentCommentId: comment.parentCommentId,
+        isActive: comment.isActive,
+        timeAgo: getTimeAgo(comment.commentCreatedAt),
+      }));
+
+      res.json({
+        success: true,
+        comments: formattedComments,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          hasMore: offset + reportedComments.length < totalCount,
+          total: totalCount,
+        },
+      });
+
+    } catch (error) {
+      console.error("Error fetching reported comments:", error);
+      res.status(500).json({
+        success: false,
+        error: "Failed to fetch reported comments",
+      });
+    }
+  },
+
+  async deleteCommentByAdmin(req, res) {
+    try {
+      const { commentId } = req.params;
+
+      // Validate comment ID
+      if (!commentId || typeof commentId !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid comment ID",
+        });
+      }
+
+      // Start a transaction
+      const result = await db.transaction(async (tx) => {
+        // Get the comment details
+        const [comment] = await tx
+          .select({
+            id: comments.id,
+            postId: comments.postId,
+            userId: comments.userId,
+            content: comments.content,
+            isActive: comments.isActive,
+            parentCommentId: comments.parentCommentId,
+          })
+          .from(comments)
+          .where(eq(comments.id, commentId))
+          .limit(1);
+
+        if (!comment) {
+          throw new Error("Comment not found");
+        }
+
+        if (!comment.isActive) {
+          throw new Error("Comment already deleted");
+        }
+
+        // Delete comment interactions
+        await tx
+          .delete(commentInteractions)
+          .where(eq(commentInteractions.commentId, commentId));
+
+        // Delete reported comments records
+        await tx
+          .delete(reportedComments)
+          .where(eq(reportedComments.commentId, commentId));
+
+        // Delete notifications related to this comment
+        await tx
+          .delete(notifications)
+          .where(
+            or(
+              eq(notifications.commentId, commentId),
+              eq(notifications.parentCommentId, commentId)
+            )
+          );
+
+        // Soft delete the comment
+        const [deletedComment] = await tx
+          .update(comments)
+          .set({
+            isActive: false,
+            content: "[deleted by admin]",
+            updatedAt: new Date(),
+          })
+          .where(eq(comments.id, commentId))
+          .returning({
+            id: comments.id,
+            content: comments.content,
+          });
+
+        // Update post comments count
+        await tx
+          .update(posts)
+          .set({
+            commentsCount: sql`${posts.commentsCount} - 1`,
+            updatedAt: new Date(),
+          })
+          .where(eq(posts.id, comment.postId));
+
+        return deletedComment;
+      });
+
+      res.status(200).json({
+        success: true,
+        message: "Comment deleted successfully",
+        data: {
+          deletedComment: result,
+        },
+      });
+
+    } catch (error) {
+      console.error("Delete comment by admin error:", error);
+
+      if (error.message.includes("Comment not found")) {
+        return res.status(404).json({
+          success: false,
+          message: "Comment not found",
+        });
+      }
+
+      if (error.message.includes("already deleted")) {
+        return res.status(400).json({
+          success: false,
+          message: "Comment already deleted",
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to delete comment",
+        error: process.env.NODE_ENV === "development" ? error.message : "Internal server error",
+      });
+    }
+  },
+
+  /**
+  * GET UNIFIED REPORTED CONTENT (POSTS + COMMENTS)
+  * This endpoint combines reported posts and reported comments into a single feed
+  * ordered by LATEST report time across both types (newest reports first)
+  */
+  async getUnifiedReportedContent(req, res) {
+    const requestId = Date.now(); // Trace ID for debugging
+
+    try {
+      const {
+        category = "New",
+        page = 1,
+        limit = 10,
+        sortBy = "reportTime",
+      } = req.query;
+
+      const pageNum = parseInt(page);
+      const limitNum = parseInt(limit);
+      const offset = (pageNum - 1) * limitNum;
+
+      console.log(`[${requestId}] 🚀 getUnifiedReportedContent called`, {
+        category,
+        page: pageNum,
+        limit: limitNum,
+        sortBy,
+      });
+
+      // ==================== STEP 1: FETCH REPORTED POSTS ====================
+      console.log(`[${requestId}] 📝 Fetching reported posts...`);
+
+      // Build WHERE condition for posts based on category
+      let postWhereCondition = and(
+        eq(posts.isActive, true),
+        gt(posts.reportCount, 0)
+      );
+
+      if (category === "New") {
+        postWhereCondition = and(postWhereCondition, eq(posts.thresholdMet, false));
+        console.log(`[${requestId}] 🆕 Category filter: New (threshold not met)`);
+      } else if (category === "Popular") {
+        postWhereCondition = and(
+          postWhereCondition,
+          eq(posts.thresholdMet, true),
+          gte(posts.likes, 1)
+        );
+        console.log(`[${requestId}] 🔥 Category filter: Popular (threshold met + likes >= 1)`);
+      }
+
+      // Fetch reported posts with latest report time
+      const reportedPostsData = await db
+        .select({
+          type: sql`'post'`.as('type'), // FIXED: Changed sq to sql
+          id: posts.id,
+          postId: posts.id,
+          commentId: sql`NULL`.as('comment_id'), // FIXED: Changed sq to sql
+          subject: posts.subject,
+          content: posts.content,
+          categories: posts.categories,
+          postType: posts.type,
+          pollOptions: posts.pollOptions,
+          likes: posts.likes,
+          saves: posts.saves,
+          commentsCount: posts.commentsCount,
+          quotesCount: posts.quotesCount,
+          reportCount: posts.reportCount,
+          latestReportAt: posts.latestReportAt,
+          createdAt: posts.createdAt,
+          thresholdMet: posts.thresholdMet,
+          thresholdMetAt: posts.thresholdMetAt,
+          userId: posts.userId,
+          userFirstName: users.firstName,
+          userLastName: users.lastName,
+          userBusinessName: users.businessName,
+          userProfilePicture: users.profilePicture,
+          isQuotePost: posts.isQuotePost,
+          quotedPostId: posts.quotedPostId,
+          quotedPostSnapshot: posts.quotedPostSnapshot,
+          commentsEnabled: posts.commentsEnabled,
+          commentsEnabledAt: posts.commentsEnabledAt,
+          commentsDisabledAt: posts.commentsDisabledAt,
+          // Additional fields for comments (NULL for posts)
+          chatroomUsername: sql`NULL`.as('chatroom_username'), // FIXED: Changed sq to sql
+          parentCommentId: sql`NULL`.as('parent_comment_id'), // FIXED: Changed sq to sql
+        })
+        .from(posts)
+        .leftJoin(users, eq(posts.userId, users.id))
+        .where(postWhereCondition);
+
+      console.log(`[${requestId}] ✅ Fetched ${reportedPostsData.length} reported posts`);
+
+      // ==================== STEP 2: FETCH REPORTED COMMENTS ====================
+      // IMPORTANT: Skip comments entirely if category is "New"
+      let reportedCommentsData = [];
+
+      if (category !== "New") {
+        console.log(`[${requestId}] 💬 Fetching reported comments...`);
+
+        // Fetch reported comments with their associated post data
+        reportedCommentsData = await db
+          .select({
+            type: sql`'comment'`.as('type'), // FIXED: Changed sq to sql
+            id: comments.id,
+            postId: posts.id,
+            commentId: comments.id,
+            subject: posts.subject,
+            content: comments.content,
+            categories: posts.categories,
+            postType: posts.type,
+            pollOptions: posts.pollOptions,
+            likes: comments.likes,
+            saves: posts.saves,
+            commentsCount: posts.commentsCount,
+            quotesCount: posts.quotesCount,
+            reportCount: comments.reportCount,
+            latestReportAt: comments.latestReportAt,
+            createdAt: comments.createdAt,
+            thresholdMet: posts.thresholdMet,
+            thresholdMetAt: posts.thresholdMetAt,
+            userId: comments.userId,
+            userFirstName: users.firstName,
+            userLastName: users.lastName,
+            userBusinessName: users.businessName,
+            userProfilePicture: users.profilePicture,
+            isQuotePost: posts.isQuotePost,
+            quotedPostId: posts.quotedPostId,
+            quotedPostSnapshot: posts.quotedPostSnapshot,
+            commentsEnabled: posts.commentsEnabled,
+            commentsEnabledAt: posts.commentsEnabledAt,
+            commentsDisabledAt: posts.commentsDisabledAt,
+            // Comment-specific fields
+            chatroomUsername: comments.chatroomUsername,
+            parentCommentId: comments.parentCommentId,
+            // Store the entire post data for display
+            postContent: posts.content,
+            postCreatedAt: posts.createdAt,
+            postUserId: posts.userId,
+            postUserFirstName: sql`post_user.first_name`.as('post_user_first_name'),
+            postUserLastName: sql`post_user.last_name`.as('post_user_last_name'),
+            postUserBusinessName: sql`post_user.business_name`.as('post_user_business_name'),
+            postUserProfilePicture: sql`post_user.profile_picture`.as('post_user_profile_picture'),
+            postLikes: posts.likes,
+            postSaves: posts.saves,
+          })
+          .from(comments)
+          .innerJoin(
+            reportedComments,
+            eq(comments.id, reportedComments.commentId)
+          )
+          .innerJoin(posts, eq(comments.postId, posts.id))
+          .leftJoin(users, eq(comments.userId, users.id))
+          .leftJoin(
+            sql`users AS post_user`,
+            sql`post_user.id = ${posts.userId}`
+          )
+          .where(
+            and(
+              eq(comments.isActive, true),
+              gt(comments.reportCount, 0),
+              eq(posts.isActive, true)
+            )
+          )
+          .groupBy(
+            comments.id,
+            posts.id,
+            users.id,
+            sql`post_user.id`,
+            sql`post_user.first_name`,
+            sql`post_user.last_name`,
+            sql`post_user.business_name`,
+            sql`post_user.profile_picture`
+          );
+
+        console.log(`[${requestId}] ✅ Fetched ${reportedCommentsData.length} reported comments`);
+      } else {
+        console.log(`[${requestId}] ⏭️ Skipping comments for "New" category`);
+      }
+
+      // ==================== STEP 3: COMBINE AND SORT ====================
+      console.log(`[${requestId}] 🔄 Combining and sorting data...`);
+
+      // Combine both arrays
+      const combinedData = [...reportedPostsData, ...reportedCommentsData];
+
+      console.log(`[${requestId}] 📊 Combined: ${reportedPostsData.length} posts + ${reportedCommentsData.length} comments = ${combinedData.length} total`);
+
+      // Sort by LATEST report time (newest reports first) - DESCENDING ORDER
+      combinedData.sort((a, b) => {
+        const timeA = new Date(a.latestReportAt);
+        const timeB = new Date(b.latestReportAt);
+        return timeB - timeA;
+      });
+
+      console.log(`[${requestId}] ✅ Total combined items: ${combinedData.length}`);
+
+      // ==================== STEP 4: PAGINATION ====================
+      const totalCount = combinedData.length;
+      const paginatedData = combinedData.slice(offset, offset + limitNum);
+
+      console.log(`[${requestId}] 📄 Paginated: ${paginatedData.length} items (page ${pageNum})`);
+
+      // ==================== STEP 5: FORMAT RESPONSE ====================
+      const formattedData = paginatedData.map((item) => {
+        const baseData = {
+          type: item.type, // This will be 'post' or 'comment' from the SELECT query
+          id: item.id,
+          postId: item.postId,
+          reportCount: item.reportCount,
+          latestReportAt: item.latestReportAt,
+          createdAt: item.createdAt,
+          timeAgo: getTimeAgo(item.createdAt),
+        };
+
+        // Check if this is a post (type === 'post' from SELECT)
+        if (item.type === 'post') {
+          // Format as a regular post
+          let quotedPost = null;
+          if (item.isQuotePost && item.quotedPostSnapshot) {
+            try {
+              quotedPost =
+                typeof item.quotedPostSnapshot === "string"
+                  ? JSON.parse(item.quotedPostSnapshot)
+                  : item.quotedPostSnapshot;
+            } catch (err) {
+              console.error(`[${requestId}] ❌ Failed to parse quoted post snapshot`, {
+                postId: item.id,
+                error: err,
+              });
+            }
+          }
+
+          return {
+            ...baseData,
+            subject: item.subject,
+            content: item.content,
+            categories: item.categories,
+            type: item.postType, // Use postType for the actual post type (text/poll)
+            pollOptions: item.pollOptions,
+            likes: item.likes,
+            saves: item.saves,
+            commentsCount: item.commentsCount,
+            quotesCount: item.quotesCount,
+            thresholdMet: item.thresholdMet,
+            thresholdMetAt: item.thresholdMetAt,
+            userId: item.userId,
+            userDisplayName:
+              item.userBusinessName ||
+              `${item.userFirstName} ${item.userLastName}`.trim(),
+            userProfilePicture: item.userProfilePicture,
+            isQuotePost: item.isQuotePost,
+            quotedPostId: item.quotedPostId,
+            quotedPostSnapshot: quotedPost,
+            commentsEnabled: item.commentsEnabled,
+            itemType: 'post', // ADD THIS: Explicit marker for frontend
+          };
+        } else {
+          // Format as a comment with its post data
+          let quotedPost = null;
+          if (item.isQuotePost && item.quotedPostSnapshot) {
+            try {
+              quotedPost =
+                typeof item.quotedPostSnapshot === "string"
+                  ? JSON.parse(item.quotedPostSnapshot)
+                  : item.quotedPostSnapshot;
+            } catch (err) {
+              console.error(`[${requestId}] ❌ Failed to parse quoted post snapshot in comment`, {
+                commentId: item.id,
+                error: err,
+              });
+            }
+          }
+
+          return {
+            ...baseData,
+            commentId: item.commentId,
+            commentContent: item.content,
+            commentLikes: item.likes,
+            chatroomUsername: item.chatroomUsername,
+            parentCommentId: item.parentCommentId,
+            itemType: 'comment', // ADD THIS: Explicit marker for frontend
+            // Post data for display
+            post: {
+              id: item.postId,
+              subject: item.subject,
+              content: item.postContent,
+              categories: item.categories,
+              type: item.postType,
+              pollOptions: item.pollOptions,
+              likes: item.postLikes,
+              saves: item.postSaves,
+              commentsCount: item.commentsCount,
+              quotesCount: item.quotesCount,
+              thresholdMet: item.thresholdMet,
+              createdAt: item.postCreatedAt,
+              timeAgo: getTimeAgo(item.postCreatedAt),
+              userId: item.postUserId,
+              userDisplayName:
+                item.postUserBusinessName ||
+                `${item.postUserFirstName} ${item.postUserLastName}`.trim(),
+              userProfilePicture: item.postUserProfilePicture,
+              isQuotePost: item.isQuotePost,
+              quotedPostId: item.quotedPostId,
+              quotedPostSnapshot: quotedPost,
+              commentsEnabled: item.commentsEnabled,
+              reportCount: 0,
+            },
+            // Comment author data
+            userId: item.userId,
+            userDisplayName:
+              item.userBusinessName ||
+              `${item.userFirstName} ${item.userLastName}`.trim() ||
+              item.chatroomUsername,
+            userProfilePicture: item.userProfilePicture,
+          };
+        }
+      });
+
+      // ==================== STEP 6: SEND RESPONSE ====================
+      const hasMore = offset + paginatedData.length < totalCount;
+
+      console.log(`[${requestId}] ✅ Response ready`, {
+        returned: formattedData.length,
+        hasMore,
+        totalCount,
+      });
+
+      res.json({
+        success: true,
+        data: formattedData,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          hasMore,
+          total: totalCount,
+        },
+        category,
+      });
+
+    } catch (error) {
+      console.error(`[${requestId}] 💥 Error fetching unified reported content`, error);
+      res.status(500).json({
+        success: false,
+        error: "Failed to fetch reported content",
+      });
+    }
+  },
+
+  /**
+   * DELETE COMMENT BY ADMIN
+   * Soft deletes a comment and cleans up all related data
+   */
+  async deleteCommentByAdmin(req, res) {
+    try {
+      const { commentId } = req.params;
+
+      // Validate comment ID format
+      if (!commentId || typeof commentId !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid comment ID",
+        });
+      }
+
+      // Start database transaction to ensure all operations succeed or fail together
+      const result = await db.transaction(async (tx) => {
+        // STEP 1: Fetch the comment to verify it exists
+        const [comment] = await tx
+          .select({
+            id: comments.id,
+            postId: comments.postId,
+            userId: comments.userId,
+            content: comments.content,
+            isActive: comments.isActive,
+            parentCommentId: comments.parentCommentId,
+          })
+          .from(comments)
+          .where(eq(comments.id, commentId))
+          .limit(1);
+
+        // Check if comment exists
+        if (!comment) {
+          throw new Error("Comment not found");
+        }
+
+        // Check if already deleted
+        if (!comment.isActive) {
+          throw new Error("Comment already deleted");
+        }
+
+        // STEP 2: Delete all likes/interactions on this comment
+        await tx
+          .delete(commentInteractions)
+          .where(eq(commentInteractions.commentId, commentId));
+
+        // STEP 3: Delete all report records for this comment
+        await tx
+          .delete(reportedComments)
+          .where(eq(reportedComments.commentId, commentId));
+
+        // STEP 4: Delete all notifications related to this comment
+        // This includes: comment likes, comment replies, etc.
+        await tx
+          .delete(notifications)
+          .where(
+            or(
+              eq(notifications.commentId, commentId), // Direct comment notifications
+              eq(notifications.parentCommentId, commentId) // Reply notifications
+            )
+          );
+
+        // STEP 5: Soft delete the comment (mark as inactive)
+        const [deletedComment] = await tx
+          .update(comments)
+          .set({
+            isActive: false,
+            content: "[deleted by admin]", // Replace content with deletion notice
+            updatedAt: new Date(),
+          })
+          .where(eq(comments.id, commentId))
+          .returning({
+            id: comments.id,
+            content: comments.content,
+          });
+
+        // STEP 6: Update the post's comment count (decrement by 1)
+        await tx
+          .update(posts)
+          .set({
+            commentsCount: sql`${posts.commentsCount} - 1`,
+            updatedAt: new Date(),
+          })
+          .where(eq(posts.id, comment.postId));
+
+        return deletedComment;
+      });
+
+      // Send success response
+      res.status(200).json({
+        success: true,
+        message: "Comment deleted successfully",
+        data: {
+          deletedComment: result,
+        },
+      });
+
+    } catch (error) {
+      console.error("Delete comment by admin error:", error);
+
+      // Handle specific error cases
+      if (error.message.includes("Comment not found")) {
+        return res.status(404).json({
+          success: false,
+          message: "Comment not found",
+        });
+      }
+
+      if (error.message.includes("already deleted")) {
+        return res.status(400).json({
+          success: false,
+          message: "Comment already deleted",
+        });
+      }
+
+      // Generic error response
+      res.status(500).json({
+        success: false,
+        message: "Failed to delete comment",
+        error: process.env.NODE_ENV === "development" ? error.message : "Internal server error",
+      });
+    }
+  },
 
 };
 

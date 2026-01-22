@@ -25,6 +25,10 @@ const users = pgTable("users", {
   profilePicture: text("profile_picture"),
   googleAuth: boolean("google_auth").default(false),
   lastLoginAt: timestamp("last_login_at"),
+  
+
+  // post relevant meta-data
+  likedPostsCount: integer("liked_posts_count").default(0),
 
   // Profile information
   businessName: varchar("business_name", { length: 255 }),
@@ -268,6 +272,7 @@ const posts = pgTable("posts", {
   commentsCount: integer("commentsCount").default(0),
   quotesCount: integer("quotes_count").default(0),
   isActive: boolean("is_active").default(true),
+  latestReportAt: timestamp("latest_report_at"),
 
   // reported times
   reportCount: integer("report_count").default(0),
@@ -383,6 +388,8 @@ const comments = pgTable("comments", {
     .references(() => users.id, { onDelete: "cascade" })
     .notNull(),
   content: text("content").notNull(),
+  reportCount: integer("report_count").default(0),
+  latestReportAt: timestamp("latest_report_at"),
 
   // Reply functionality
   parentCommentId: uuid("parent_comment_id").references(() => comments.id, {
@@ -524,7 +531,30 @@ const reportedPosts = pgTable("reported_posts", {
   ),
   // Index for quick lookups
   postIdIdx: index("report_post_id_idx").on(table.postId),
+  // ADD THIS NEW INDEX for sorting by latest report
+  latestReportIdx: index("latest_report_idx").on(table.postId, table.createdAt),
 }));
+
+const reportedComments = pgTable("reported_comments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  commentId: uuid("comment_id")
+    .references(() => comments.id, { onDelete: "cascade" })
+    .notNull(),
+  reportedBy: uuid("reported_by")
+    .references(() => users.id, { onDelete: "cascade" })
+    .notNull(),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  // Composite unique index: one report per user per comment
+  uniqueUserComment: uniqueIndex("unique_user_comment_report").on(
+    table.reportedBy,
+    table.commentId
+  ),
+  // Index for quick lookups
+  commentIdIdx: index("report_comment_id_idx").on(table.commentId),
+}));
+
 
 module.exports = {
   users,
@@ -547,5 +577,6 @@ module.exports = {
   chatroomIdentities,
   creativeInquiries,
   creativeProposals,
-  reportedPosts
+  reportedPosts,
+  reportedComments
 };

@@ -222,7 +222,6 @@ const authController = {
   async checkEmailExists(req, res) {
     try {
       const { email } = req.body;
-
       if (!email) {
         return res.status(400).json({
           success: false,
@@ -232,36 +231,43 @@ const authController = {
 
       const normalizedEmail = email.toLowerCase().trim();
 
-      console.log(normalizedEmail)
+      // Extract domain from email
+      const emailDomain = normalizedEmail.split('@')[1];
 
+      console.log("Checking email:", normalizedEmail);
+      console.log("Email domain:", emailDomain);
 
-      // Check if user exists with this email in the email column
+      // ============================================
+      // CHECK 1: Direct email match (YOUR EXISTING LOGIC - UNCHANGED)
+      // ============================================
       const existingUser = await db
         .select({
           id: users.id,
           email: users.email,
-          status: users.status,  // <-- you MUST fetch this
+          status: users.status,
         })
         .from(users)
         .where(sql`LOWER(${users.email}) = ${normalizedEmail}`)
         .limit(1);
 
-      console.log(existingUser[0])
-      console.log(existingUser)
       if (existingUser.length > 0 && existingUser[0].status !== "rejected") {
         return res.status(200).json({
           success: true,
           data: {
             exists: true,
+            reason: "email_exists",
           },
         });
       }
 
-      // Check if email exists in originalDataBackup (for anonymous users)
+      // ============================================
+      // CHECK 2: Email in originalDataBackup (YOUR EXISTING LOGIC - UNCHANGED)
+      // ============================================
       const anonymousUsers = await db
         .select({
           id: users.id,
           originalDataBackup: users.originalDataBackup,
+          status: users.status,
         })
         .from(users)
         .where(
@@ -273,6 +279,9 @@ const authController = {
 
       // Parse and check each backup for the email
       const emailExistsInBackup = anonymousUsers.some((user) => {
+        // Skip rejected users
+        if (user.status === "rejected") return false;
+
         try {
           if (user.originalDataBackup) {
             const backup = JSON.parse(user.originalDataBackup);
@@ -288,10 +297,77 @@ const authController = {
         }
       });
 
+      if (emailExistsInBackup) {
+        return res.status(200).json({
+          success: true,
+          data: {
+            exists: true,
+            reason: "email_exists_backup",
+          },
+        });
+      }
+
+      // ============================================
+      // CHECK 3: Domain match (NEW - ONLY FOR APPROVED USERS)
+      // ============================================
+
+      // Get all approved users with their emails
+      const allApprovedUsers = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          status: users.status,
+          isAnonymous: users.isAnonymous,
+          originalDataBackup: users.originalDataBackup,
+        })
+        .from(users)
+        .where(eq(users.status, "approved"));
+
+      // Check if domain exists in any approved user
+      const domainExists = allApprovedUsers.some((user) => {
+        // Check current email column
+        if (user.email) {
+          const userDomain = user.email.toLowerCase().split('@')[1];
+          if (userDomain === emailDomain) {
+            console.log(`Domain match found in current email for user: ${user.id}`);
+            return true;
+          }
+        }
+
+        // Check originalDataBackup for anonymous users
+        if (user.isAnonymous && user.originalDataBackup) {
+          try {
+            const backup = JSON.parse(user.originalDataBackup);
+            if (backup?.email) {
+              const backupDomain = backup.email.toLowerCase().split('@')[1];
+              if (backupDomain === emailDomain) {
+                console.log(`Domain match found in backup for user: ${user.id}`);
+                return true;
+              }
+            }
+          } catch (err) {
+            console.error(`Failed to parse backup for user ${user.id}:`, err);
+          }
+        }
+
+        return false;
+      });
+
+      if (domainExists) {
+        return res.status(200).json({
+          success: true,
+          data: {
+            exists: true,
+            reason: "domain_exists",
+          },
+        });
+      }
+
+      // Email and domain are available
       return res.status(200).json({
         success: true,
         data: {
-          exists: emailExistsInBackup,
+          exists: false,
         },
       });
     } catch (error) {

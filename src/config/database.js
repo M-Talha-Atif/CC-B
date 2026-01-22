@@ -4,9 +4,10 @@ const schema = require("../models/schema");
 
 // Create postgres client
 const client = postgres(process.env.DATABASE_URL, {
-  max: 10,
-  idle_timeout: 30,
-  connect_timeout: 40,
+  max: 25,              // Change from 10 to 25
+  idle_timeout: 20,
+  connect_timeout: 10,
+  max_lifetime: 3600,  // Add this - close connections after 1 hour
 });
 
 // Create drizzle instance

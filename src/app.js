@@ -15,6 +15,8 @@ const anonymousRoutes = require("./routes/anonymous");
 const creativeInquiryRoutes = require("./routes/CreativeInquiryRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const cookieParser = require("cookie-parser");
+const rateLimit = require("express-rate-limit");
+const compression = require('compression');
 
 const app = express();
 
@@ -49,6 +51,9 @@ app.use(cookieParser());
 // Security middleware
 app.use(helmet());
 
+
+app.use(compression()); // Enable gzip compression
+
 const allowedOrigins = [process.env.FRONTEND_URL, process.env.ADMIN_URL].filter(
   Boolean
 );
@@ -76,23 +81,23 @@ app.use(
 );
 
 // RATE LIMITING COMMENTED OUT FOR AWS DEPLOYMENT
-/*
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
-  message: "Too many requests from this IP, please try again later.",
-});
-app.use("/api/", limiter);
 
-// Stricter rate limiting for auth routes
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // much higher limit for dev
-  message: "Too many authentication attempts, please try again later.",
-});
-app.use("/api/auth/", authLimiter);
-*/
+// // Rate limiting
+// const limiter = rateLimit({
+//   windowMs: 4 * 60 * 1000, // 15 minutes
+//   max: 100, // Limit each IP to 100 requests per windowMs
+//   message: "Too many requests from this IP, please try again later.",
+// });
+// app.use("/api/", limiter);
+
+// // Stricter rate limiting for auth routes
+// const authLimiter = rateLimit({
+//   windowMs: 4 * 60 * 1000, // 4 minutes
+//   max: 100, // 10 limits for auth
+//   message: "Too many authentication attempts, please try again later.",
+// });
+// app.use("/api/auth/", authLimiter);
+
 
 // Body parsing middleware
 app.use(express.json({ limit: "10mb" }));

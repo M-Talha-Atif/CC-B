@@ -10,8 +10,8 @@ const authenticateToken = (req, res, next) => {
   const headerToken = req.headers.authorization?.split(" ")[1];
   const token = cookieToken || headerToken;
 
-  console.log("🍪 Cookies:", req.cookies);
-  console.log("🔐 Header token:", headerToken ? headerToken.substring(0, 15) + "..." : "None");
+  // console.log("🍪 Cookies:", req.cookies);
+  // console.log("🔐 Header token:", headerToken ? headerToken.substring(0, 15) + "..." : "None");
 
   if (!refreshToken) {
     // console.log("no token found")

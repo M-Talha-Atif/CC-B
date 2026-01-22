@@ -2,8 +2,12 @@ const { db } = require("../config/database");
 const { notifications, users } = require("../models/schema");
 const { eq, and, desc } = require("drizzle-orm");
 const { emitToUser } = require("./socketService");
+const { generateSlug, buildCategoriesPath } = require("../utils/slug");
+
 
 const NotificationService = {
+
+
   async createNotification({
     userId,
     actorId,
@@ -65,34 +69,38 @@ const NotificationService = {
   },
 
   // Specific notification creators
-  async notifyPostLike(
-    postOwnerId,
-    actorId,
-    postId,
-    postSubject,
-    postCategories
-  ) {
-    return this.createNotification({
-      userId: postOwnerId,
-      actorId,
-      type: "post_like",
-      postId,
-      message: "liked your post",
-      metadata: {
-        postSubject,
-        postCategories, // Add this
-      },
-    });
-  },
+  // async notifyPostLike(
+  //   postOwnerId,
+  //   actorId,
+  //   postId,
+  //   postSubject,
+  //   postCategories
+  // ) {
+  //   return this.createNotification({
+  //     userId: postOwnerId,
+  //     actorId,
+  //     type: "post_like",
+  //     postId,
+  //     message: "liked your post",
+  //     metadata: {
+  //       postSubject,
+  //       postCategories, // Add this
+  //     },
+  //   });
+  // },
 
   async notifyPostComment(
     postOwnerId,
     actorId,
     postId,
     commentContent,
-    postSubject,
-    postCategories // Add this parameter
+    post
   ) {
+    const slug = generateSlug(post.subject);
+    const categoriesPath = buildCategoriesPath(post.categories);
+
+    console.log(slug)
+
     return this.createNotification({
       userId: postOwnerId,
       actorId,
@@ -100,14 +108,26 @@ const NotificationService = {
       postId,
       message: "commented on your post",
       metadata: {
-        postSubject,
-        postCategories, // Add this
+        postSlug: slug,
+        categoriesPath,
         commentPreview: commentContent.substring(0, 100),
+        // target: commentsCount > 0 ? "chatroom" : "feed",
+        target: "chatroom",
+
       },
     });
   },
-  
-  async notifyCommentLike(commentOwnerId, actorId, commentId, postId) {
+
+  async notifyCommentLike(
+    commentOwnerId,
+    actorId,
+    commentId,
+    postId,
+    post
+  ) {
+    const slug = generateSlug(post.subject);
+    const categoriesPath = buildCategoriesPath(post.categories);
+
     return this.createNotification({
       userId: commentOwnerId,
       actorId,
@@ -115,6 +135,11 @@ const NotificationService = {
       commentId,
       postId,
       message: "liked your comment",
+      metadata: {
+        postSlug: slug,
+        categoriesPath,
+        target: "chatroom", // comment likes always go to chatroom
+      },
     });
   },
 
@@ -124,8 +149,11 @@ const NotificationService = {
     commentId,
     parentCommentId,
     postId,
-    replyContent
+    replyContent,
+    post
   ) {
+    const slug = generateSlug(post.subject);
+    const categoriesPath = buildCategoriesPath(post.categories);
     return this.createNotification({
       userId: commentOwnerId,
       actorId,
@@ -136,6 +164,9 @@ const NotificationService = {
       message: "replied to your comment",
       metadata: {
         replyPreview: replyContent.substring(0, 100),
+        postSlug: slug,
+        categoriesPath,
+        target: "chatroom", // comment replies always go to chatroom
       },
     });
   },
