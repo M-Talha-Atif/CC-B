@@ -124,6 +124,7 @@ const authService = {
           return {
             user: userForResponse,
             progress,
+            profileCompleted: true ? progress === "onboarding-completed" : false,
             action: "register",
             isNewUser: true,
           };
@@ -136,11 +137,17 @@ const authService = {
           const progress = await onboardingService.getProgress(userData.id);
           const userForResponse = AnonymousService.formatUserForResponse(userData);
 
+          console.log("[LOGIN] Onboarding progress fetched", {
+            userId: userData.id,
+            emailVerified: userData.emailVerified,
+            progress,
+          });
+
           return {
             user: userForResponse,
             progress,
             action: "login",
-            isNewUser: false,
+            isNewUser: userData.emailVerified==false, // new user then email verified should be false
           };
         }
       }
@@ -256,7 +263,7 @@ const authService = {
   async verifyReferralCode(code, usedByUserId) {
     try {
       // Check if already used by this user
-     
+
       const existingUsage = await db
         .select()
         .from(referralUsage)
@@ -943,13 +950,19 @@ const authService = {
   },
 
   async checkUserAccess(userId) {
+
+    console.log("User access is checked")
+
     try {
       const [user] = await db
         .select({
           id: users.id,
           email: users.email,
           status: users.status,
-          profileCompleted: users.profileCompleted,
+          isAnonymous: users.isAnonymous,
+          anonymousId: users.anonymousId,
+          anonymousActivatedAt: users.anonymousActivatedAt,
+          userType: users.userType,
         })
         .from(users)
         .where(eq(users.id, userId))
@@ -960,7 +973,9 @@ const authService = {
       }
 
       return {
+        userType: user.userType,
         canAccess: user.status === "approved",
+        isAnonymous: user.isAnonymous,
         status: user.status,
         profileCompleted: user.profileCompleted,
       };
@@ -1039,7 +1054,7 @@ const authService = {
 
   async checkInstagramExists(instagram) {
     try {
-      
+
       const cleanInstagram = instagram.toLowerCase();
 
       console.log("Incoming Instagram:", cleanInstagram);

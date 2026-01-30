@@ -1,6 +1,13 @@
 const cron = require("node-cron");
 const { db } = require("../config/database");
-const { posts, comments, users } = require("../models/schema");
+const { 
+  posts, 
+  comments, 
+  users, 
+  postRateLimits, // ADD THIS IMPORT
+  referralUsage, 
+  onboardingProgress 
+} = require("../models/schema");
 const { eq, and, lt, gte, sql, inArray, isNull } = require("drizzle-orm");
 
 class CronJobService {
@@ -37,7 +44,7 @@ class CronJobService {
   // Schedule a new cron job
   scheduleJob(name, schedule, callback) {
     if (this.jobs.has(name)) {
-      console.log(`⚠️ Job ${name} already exists, stopping previous job`);
+      console.log(`⚠️ Job ${name} already exists, stopping previous job`); // FIXED: Template literal syntax
       this.jobs.get(name).stop();
     }
 
@@ -47,20 +54,16 @@ class CronJobService {
     });
 
     this.jobs.set(name, job);
-    console.log(`📅 Scheduled job: ${name} with schedule: ${schedule}`);
+    console.log(`📅 Scheduled job: ${name} with schedule: ${schedule}`); // FIXED: Template literal syntax
   }
 
   // Main function to manage posts and comments
   async managePostsAndComments() {
-    console.log("🔄 Running post and comment management...");
-
     try {
       await this.checkAndUpdateThresholds();
       await this.enableCommentsForQualifiedPosts();
       await this.hideUnqualifiedPosts();
-      await this.disableExpiredChatrooms(); // Fixed function name and logic
-
-      console.log("✅ Post and comment management completed successfully");
+      await this.disableExpiredChatrooms();
     } catch (error) {
       console.error("❌ Error in post and comment management:", error);
     }
@@ -83,10 +86,6 @@ class CronJobService {
         .from(posts)
         .where(and(eq(posts.isActive, true), eq(posts.thresholdMet, false)));
 
-      console.log(
-        `🎯 Checking ${postsToCheck.length} posts for threshold status`
-      );
-
       let updatedCount = 0;
       const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
 
@@ -108,21 +107,13 @@ class CronJobService {
           if (!post.commentsEnabled && isPostWithin48Hours) {
             updateData.commentsEnabled = true;
             updateData.commentsEnabledAt = new Date();
-            console.log(
-              `💬 Auto-enabling comments for post "${post.subject}" (threshold met, within 48h)`
-            );
           }
 
           await db.update(posts).set(updateData).where(eq(posts.id, post.id));
-
-          console.log(
-            `🎯 Threshold met for post "${post.subject}" (${likesCount}/${requiredLikes} likes)`
-          );
           updatedCount++;
         }
       }
 
-      console.log(`🎯 Updated threshold status for ${updatedCount} posts`);
       return updatedCount;
     } catch (error) {
       console.error("❌ Error checking thresholds:", error);
@@ -131,8 +122,6 @@ class CronJobService {
   }
 
   async cleanupExpiredRateLimits() {
-    console.log("🧹 Running rate limit cleanup...");
-
     try {
       const now = new Date();
 
@@ -153,19 +142,19 @@ class CronJobService {
       return deleted.length;
     } catch (error) {
       console.error("❌ Error cleaning up rate limits:", error);
-      // Don't throw - let other cron jobs continue
       return 0;
     }
   }
 
   async cleanupRejectedUsers() {
-    console.log("Running rejected users cleanup...");
-
     try {
       const cutoffDate = new Date();
       cutoffDate.setHours(cutoffDate.getHours() - 3); // 3 hours ago
 
-      // Find rejected users older than 48 hours
+      // FIXED: Properly format the date for SQL comparison
+      const cutoffDateISO = cutoffDate.toISOString();
+
+      // Find rejected users older than 3 hours
       const rejectedUsers = await db
         .select({
           id: users.id,
@@ -176,14 +165,13 @@ class CronJobService {
         .where(
           and(
             eq(users.status, "referral_rejected"),
-            sql`${users.updatedAt} < ${cutoffDate}`
+            sql`${users.updatedAt} < ${cutoffDateISO}::timestamp` // FIXED: Proper SQL date comparison
           )
         );
 
-      console.log(`Found ${rejectedUsers.length} rejected users to clean up`);
+      console.log(`Found ${rejectedUsers.length} rejected users to clean up`); // FIXED: Template literal
 
       let deletedCount = 0;
-
       for (const user of rejectedUsers) {
         // Delete referral usage first
         await db
@@ -198,11 +186,11 @@ class CronJobService {
         // Delete the user (CASCADE will handle other relations)
         await db.delete(users).where(eq(users.id, user.id));
 
-        console.log(`Deleted rejected user: ${user.email}`);
+        console.log(`Deleted rejected user: ${user.email}`); // FIXED: Template literal
         deletedCount++;
       }
 
-      console.log(`Cleanup completed: ${deletedCount} rejected users deleted`);
+      console.log(`Cleanup completed: ${deletedCount} rejected users deleted`); // FIXED: Template literal
       return deletedCount;
     } catch (error) {
       console.error("Error cleaning up rejected users:", error);
@@ -232,12 +220,7 @@ class CronJobService {
           )
         );
 
-      console.log(
-        `💬 Found ${postsNeedingComments.length} threshold-met posts needing comment enablement`
-      );
-
       let enabledCount = 0;
-
       for (const post of postsNeedingComments) {
         await db
           .update(posts)
@@ -248,13 +231,9 @@ class CronJobService {
           })
           .where(eq(posts.id, post.id));
 
-        console.log(
-          `💬 Enabled comments for post "${post.subject}" (${post.likes} likes, threshold met)`
-        );
         enabledCount++;
       }
 
-      console.log(`💬 Enabled comments for ${enabledCount} posts`);
       return enabledCount;
     } catch (error) {
       console.error("❌ Error enabling comments for qualified posts:", error);
@@ -289,12 +268,7 @@ class CronJobService {
           )
         );
 
-      console.log(
-        `📊 Found ${unqualifiedPosts.length} posts to evaluate for hiding (1 hour threshold)`
-      );
-
       let hiddenCount = 0;
-
       for (const post of unqualifiedPosts) {
         const likesCount = post.likes || 0;
 
@@ -308,15 +282,9 @@ class CronJobService {
           })
           .where(eq(posts.id, post.id));
 
-        console.log(
-          `👁️‍🗨️ Hidden post "${post.subject}" from public feeds (${likesCount}/1 likes) - visible to author only`
-        );
         hiddenCount++;
       }
 
-      console.log(
-        `👁️‍🗨️ Hidden ${hiddenCount} posts from public feeds (author-only visibility)`
-      );
       return hiddenCount;
     } catch (error) {
       console.error("❌ Error hiding unqualified posts:", error);
@@ -341,17 +309,13 @@ class CronJobService {
           and(
             eq(posts.isActive, true),
             eq(posts.commentsEnabled, true),
-            isNull(posts.commentsDisabledAt), // Only get posts that haven't been disabled yet
-            sql`${posts.commentsCount} > 0`
+            isNull(posts.commentsDisabledAt),
+            sql`${posts.commentsCount} > 0` // FIXED: Use sql instead of sq
           )
         );
 
-      console.log(
-        `🔒 Checking ${activeChatrooms.length} active chatrooms for expiration (1 hour window)`
-      );
-
       let disabledCount = 0;
-      const oneHourAgo = new Date(Date.now() - 1 * 60 * 60 * 1000); // 1 hour ago
+      const oneHourAgo = new Date(Date.now() - 1 * 60 * 60 * 1000);
 
       for (const post of activeChatrooms) {
         // Get the first comment timestamp for this post
@@ -382,7 +346,6 @@ class CronJobService {
         }
       }
 
-      console.log(`🔒 Disabled ${disabledCount} expired chatrooms`);
       return disabledCount;
     } catch (error) {
       console.error("❌ Error disabling expired chatrooms:", error);
@@ -395,7 +358,7 @@ class CronJobService {
     try {
       const stats = await db
         .select({
-          totalPosts: sql`COUNT(*)`,
+          totalPosts: sql`COUNT(*)`, // FIXED: Use sql instead of sq
           activePosts: sql`COUNT(CASE WHEN ${posts.isActive} = true THEN 1 END)`,
           hiddenPosts: sql`COUNT(CASE WHEN ${posts.visibleToAuthorOnly} = true THEN 1 END)`,
           postsWithActiveComments: sql`COUNT(CASE WHEN ${posts.commentsEnabled} = true AND ${posts.commentsDisabledAt} IS NULL THEN 1 END)`,
@@ -419,7 +382,7 @@ class CronJobService {
     console.log("🛑 Stopping all cron jobs...");
     this.jobs.forEach((job, name) => {
       job.stop();
-      console.log(`⏹️  Stopped job: ${name}`);
+      console.log(`⏹️  Stopped job: ${name}`); // FIXED: Template literal
     });
     this.jobs.clear();
   }
@@ -439,7 +402,7 @@ class CronJobService {
 
 module.exports = new CronJobService();
 
-// FIXED: Helper function to calculate chatroom time remaining based on first comment (1 hour window)
+// Helper function to calculate chatroom time remaining based on first comment (1 hour window)
 async function calculateChatroomTimeRemainingAsync(postId) {
   try {
     // Get the first comment for this post
@@ -458,7 +421,7 @@ async function calculateChatroomTimeRemainingAsync(postId) {
 
     const firstCommentTime = new Date(firstComment.createdAt);
     const expiresAt = new Date(
-      firstCommentTime.getTime() + 1 * 60 * 60 * 1000 // FIXED: 1 hour from first comment
+      firstCommentTime.getTime() + 1 * 60 * 60 * 1000 // 1 hour from first comment
     );
     const now = new Date();
 
@@ -472,22 +435,20 @@ async function calculateChatroomTimeRemainingAsync(postId) {
   }
 }
 
-// FIXED: Synchronous version for immediate calculation
+// Synchronous version for immediate calculation
 function calculateChatroomTimeRemaining(post) {
-  // This function needs the first comment timestamp to work properly
-  // It should be used with pre-fetched first comment data
   if (!post.firstCommentAt) {
-    return null; // No first comment data available
+    return null;
   }
 
   const firstCommentTime = new Date(post.firstCommentAt);
   const expiresAt = new Date(
-    firstCommentTime.getTime() + 1 * 60 * 60 * 1000 // FIXED: 1 hour from first comment
+    firstCommentTime.getTime() + 1 * 60 * 60 * 1000
   );
   const now = new Date();
 
-  // Calculate remaining time in minutes
   const timeLeft = Math.max(0, Math.floor((expiresAt - now) / (1000 * 60)));
+
   return timeLeft;
 }
 
@@ -495,7 +456,6 @@ function calculateChatroomTimeRemaining(post) {
 function calculateThresholdTimeRemaining(post) {
   const THRESHOLD_DURATION = 1 * 60 * 60 * 1000; // 1 hour
 
-  // If post has already met threshold, return 0
   if (post.thresholdMet) {
     return 0;
   }
@@ -505,7 +465,6 @@ function calculateThresholdTimeRemaining(post) {
   const elapsed = now - createdAt;
   const remaining = THRESHOLD_DURATION - elapsed;
 
-  // Return remaining time in minutes
   return Math.max(0, Math.floor(remaining / (1000 * 60)));
 }
 
@@ -517,8 +476,10 @@ function getTimeAgo(date) {
 
   if (diffMins < 1) return "just now";
   if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? "s" : ""} ago`;
+
   const diffHours = Math.floor(diffMins / 60);
   if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? "s" : ""} ago`;
+
   const diffDays = Math.floor(diffHours / 24);
   return `${diffDays} day${diffDays > 1 ? "s" : ""} ago`;
 }

@@ -8,12 +8,30 @@ const {
 } = require("../middleware/validation");
 const authController = require("../controllers/authController");
 const { authenticateToken } = require("../middleware/auth");
+const rateLimit = require("express-rate-limit");
+
+
 
 const router = express.Router();
 
+// Rate limiter for login and signup only
+const loginRegisterLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 10, // 10 attempts per IP
+  message: "Too many login/signup attempts, please try again later.",
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false,   // Disable the old `X-RateLimit-*` headers
+  keyGenerator: (req) => {
+    console.log("Rate limit IP:", req.ip); // Debug IP
+    return req.ip; // Use IP as key
+  },
+});
+
 // Auth routes for creative registration flow
-router.post("/register", validateRegistration, authController.register);
-router.post("/login", validateLogin, authController.login);
+// Apply it only to these routes
+router.post("/register", loginRegisterLimiter, validateRegistration, authController.register);
+router.post("/login", loginRegisterLimiter, validateLogin, authController.login);
+
 router.post("/check-email", authController.checkEmailExists);
 router.post("/google-login-creative", authController.googleLoginCreative);
 router.post("/google-login-couple", authController.googleLoginCouple);

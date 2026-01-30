@@ -769,7 +769,8 @@ const AdminController = {
           pointsToCodeOwner = calculatePoints(referralNumber);
           pointsToUser = 1;
           pointsToAdmin = 0;
-        } else {
+        }
+        else {
           // Admin code
           pointsToUser = 1; // Always give 1 point to the new user
           pointsToAdmin = pendingReferral.codeOwnerId ? 0.5 : 1; // 0.5 if assigned, 1 if unassigned
@@ -917,6 +918,7 @@ const AdminController = {
         .limit(1);
 
       let isReferralLimitRejection = false;
+
       if (pendingReferral) {
         // Mark referral as rejected
         await db
@@ -927,18 +929,33 @@ const AdminController = {
           })
           .where(eq(referralUsage.id, pendingReferral.id));
 
-        // Check if it's a limit rejection
-        const activeCount = await db
-          .select({ count: sql`count(*)` })
-          .from(referralUsage)
-          .where(
-            and(
-              eq(referralUsage.referralCode, pendingReferral.referralCode),
-              eq(referralUsage.status, "active")
-            )
-          );
 
-        isReferralLimitRejection = Number(activeCount[0].count) >= 7;
+        console.log(`[RejectUser] Pending referral found for userId ${userId} with code: ${pendingReferral.referralCode} (type: ${pendingReferral.codeType})`);
+
+
+        if (pendingReferral.codeType !== "admin") {
+
+          const activeCount = await db
+            .select({ count: sql`count(*)` })
+            .from(referralUsage)
+            .where(
+              and(
+                eq(referralUsage.referralCode, pendingReferral.referralCode),
+                eq(referralUsage.status, "active")
+              )
+            );
+            
+        // Check if it's a limit rejection
+
+          isReferralLimitRejection = Number(activeCount[0].count) >= 7;
+
+          console.log(`[RejectUser] Active usage count: ${activeCount[0].count}`);
+        }
+
+        else {
+            console.log(`[RejectUser] Code type is admin, skipping referral limit check.`);
+        }
+
       }
 
       const updatedUser = await adminService.rejectUser(userId);

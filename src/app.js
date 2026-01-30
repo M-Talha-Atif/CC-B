@@ -2,7 +2,6 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
-// const rateLimit = require("express-rate-limit"); // COMMENTED OUT - Rate limiting disabled
 require("dotenv").config();
 
 // Import routes
@@ -15,10 +14,13 @@ const anonymousRoutes = require("./routes/anonymous");
 const creativeInquiryRoutes = require("./routes/CreativeInquiryRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const cookieParser = require("cookie-parser");
-const rateLimit = require("express-rate-limit");
+// const rateLimit = require("express-rate-limit");
 const compression = require('compression');
 
 const app = express();
+
+// Trust first proxy
+app.set("trust proxy", 1);
 
 app.use(
   "/api/creative-inquiries/stripe/webhook",
@@ -92,8 +94,8 @@ app.use(
 
 // // Stricter rate limiting for auth routes
 // const authLimiter = rateLimit({
-//   windowMs: 4 * 60 * 1000, // 4 minutes
-//   max: 100, // 10 limits for auth
+//   windowMs: 5 * 60 * 1000, // 5 minutes
+//   max: 100, // 100 limits for auth
 //   message: "Too many authentication attempts, please try again later.",
 // });
 // app.use("/api/auth/", authLimiter);

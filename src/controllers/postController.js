@@ -1928,6 +1928,7 @@ const PostController = {
   },
 
   async toggleLike(req, res) {
+    console.log("Like operation is called")
     try {
       const { postId } = req.params;
       const userId = req.userData.id;
@@ -1948,10 +1949,7 @@ const PostController = {
         .limit(1);
 
       if (currentPost.length === 0) {
-        return res.status(404).json({
-          success: false,
-          error: "Post not found"
-        });
+        return res.status(404).json({ error: "Post not found" });
       }
 
       const post = currentPost[0];
@@ -1972,14 +1970,14 @@ const PostController = {
       const isCurrentlyLiked = existing.length > 0;
 
       if (isCurrentlyLiked) {
-        // ============ UNLIKE LOGIC ============
+        // UNLIKE LOGIC
         const newLikes = post.likes - 1;
 
         // CRITICAL CHECK: Prevent unliking if this would break the threshold
         if (post.thresholdMet && newLikes < 1) {
           return res.status(400).json({
-            success: false,
-            error: "Cannot unlike - this would cause the post to lose its threshold status",
+            error:
+              "Cannot unlike - this would cause the post to lose its threshold status",
             message: "Action not permitted",
             canUnlike: false,
           });
@@ -1998,31 +1996,22 @@ const PostController = {
           })
           .where(eq(posts.id, postId));
 
-        // Use transaction
-        // await db.transaction(async (tx) => {
+        // NO NOTIFICATION ON UNLIKE
 
-
-
-        //   // FIXED: Use sql instead of sq
-        //   await tx
-        //     .update(users)
-        //     .set({
-        //       likedPostsCount: sql`GREATEST(COALESCE(${users.likedPostsCount}, 0) - 1, 0)`,
-        //     })
-        //     .where(eq(users.id, userId));
-        // });
-
-        console.log("Post un Liked")
-
-        return res.json({
-          success: true,
+        res.json({
           liked: false,
           message: "Post unliked",
           likes: newLikes,
           canUnlike: true,
         });
       } else {
-        // ============ LIKE LOGIC ============
+        // LIKE LOGIC
+        await db.insert(postInteractions).values({
+          userId,
+          postId,
+          type: "like",
+        });
+
         const newLikes = post.likes + 1;
         const postCreatedAt = new Date(post.createdAt);
         const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
@@ -2042,7 +2031,7 @@ const PostController = {
           updateData.thresholdMetAt = new Date();
           thresholdJustMet = true;
           console.log(
-            `INSTANT: Threshold met for post ${postId} (${newLikes}/1 likes)`
+            `ðŸŽ¯ INSTANT: Threshold met for post ${postId} (${newLikes}/1 likes)`
           );
         }
 
@@ -2052,38 +2041,25 @@ const PostController = {
           updateData.commentsEnabledAt = new Date();
           commentsJustEnabled = true;
           console.log(
-            `INSTANT: Comments enabled for post ${postId} (${newLikes} likes)`
+            `ðŸ’¬ INSTANT: Comments enabled for post ${postId} (${newLikes} likes)`
           );
         }
 
-        await db.insert(postInteractions).values({
-          userId,
-          postId,
-          type: "like",
-        });
-
-
         await db.update(posts).set(updateData).where(eq(posts.id, postId));
 
-        //  Use transaction
-        // await db.transaction(async (tx) => {
+        // === NOTIFICATION LOGIC - ONLY ON LIKE ===
+        // Don't notify if user is liking their own post
+        // if (post.userId !== userId) {
+        //   const NotificationService = require("../services/notificationService");
+        //   await NotificationService.notifyPostLike(
+        //     post.userId,
+        //     userId,
+        //     postId,
+        //     post.subject
+        //   );
+        // }
 
-
-
-
-
-        //   await tx
-        //     .update(users)
-        //     .set({
-        //       likedPostsCount: sql`COALESCE(${users.likedPostsCount}, 0) + 1`,
-        //     })
-        //     .where(eq(users.id, userId));
-        // });
-
-        console.log("Post Liked")
-
-        return res.json({
-          success: true,
+        res.json({
           liked: true,
           message: "Post liked",
           likes: newLikes,
@@ -2096,20 +2072,7 @@ const PostController = {
       }
     } catch (error) {
       console.error("Error toggling like:", error);
-
-      // Handle duplicate like gracefully (idempotency)
-      if (error.cause?.code === "23505") {
-        return res.status(400).json({
-          success: false,
-          error: "You have already liked this post",
-          liked: true,
-        });
-      }
-
-      return res.status(500).json({
-        success: false,
-        error: "Failed to toggle like"
-      });
+      res.status(500).json({ error: "Failed to toggle like" });
     }
   },
 
@@ -2117,6 +2080,7 @@ const PostController = {
     try {
       const userId = req.userData.id;
 
+      // Count how many posts the user has liked
       const likeCount = await db
         .select({ count: sql`count(*)` })
         .from(postInteractions)
@@ -2130,21 +2094,12 @@ const PostController = {
       const totalLikes = parseInt(likeCount[0].count) || 0;
       const canPost = totalLikes >= 5;
 
-
-      // const [user] = await db
-      //   .select({ likedPostsCount: users.likedPostsCount })
-      //   .from(users)
-      //   .where(eq(users.id, userId));
-
-      // const canPost = user.likedPostsCount >= 5;
-
-
       return res.json({
         success: true,
         canPost,
-        likesCount: likeCount,
+        likesCount: totalLikes,
         likesRequired: 5,
-        likesRemaining: Math.max(0, 5 - likeCount),
+        likesRemaining: Math.max(0, 5 - totalLikes),
       });
     } catch (error) {
       console.error("Error checking posting eligibility:", error);
@@ -3185,84 +3140,92 @@ const PostController = {
   },
 
   async createComment(req, res) {
+
+    const {
+      postId,
+      content,
+      parentCommentId = null,
+      mentions = [],
+    } = req.body;
+    const userId = req.user.id;
+
+    console.log("[CREATE_COMMENT][REQUEST]", {
+      userId,
+      postId,
+      content,
+      parentCommentId,
+    });
+
     try {
-      const {
-        postId,
-        content,
-        parentCommentId = null,
-        mentions = [],
-      } = req.body;
-      const userId = req.user.id;
-
+      // === STEP 1: Validate input ===
       if (!content || content.trim().length === 0) {
-        return res.status(400).json({ error: "Content is required" });
+        return res.status(400).json({ error: "Comment content is required" });
       }
 
-      // Verify post exists and check if comments are enabled
-      const [post] = await db
-        .select({
-          id: posts.id,
-          userId: posts.userId,
-          subject: posts.subject,
-          commentsEnabled: posts.commentsEnabled,
-          categories: posts.categories,
-          commentsEnabledAt: posts.commentsEnabledAt,
-          openedBy: posts.openedBy,
-          openedByUsername: posts.openedByUsername,
-          commentsCount: posts.commentsCount,
-        })
-        .from(posts)
-        .where(and(eq(posts.id, postId), eq(posts.isActive, true)))
-        .limit(1);
-
-      if (!post) {
-        return res.status(404).json({ error: "Post not found" });
-      }
-
-      if (!post.commentsEnabled) {
-        return res.status(403).json({
-          error: "Comments are not enabled for this post",
+      if (content.length > 500) {
+        return res.status(400).json({
+          error: "Comment content must be 500 characters or less",
         });
       }
 
-      // Check if timer has started and expired (only if there are existing comments)
-      if (post.commentsCount > 0) {
-        const [firstComment] = await db
-          .select({ createdAt: comments.createdAt })
-          .from(comments)
-          .where(and(eq(comments.postId, postId), eq(comments.isActive, true)))
-          .orderBy(comments.createdAt)
+      // === STEP 2: Fetch post with transaction ===
+      const post = await db.transaction(async (tx) => {
+        const [fetchedPost] = await tx
+          .select({
+            id: posts.id,
+            userId: posts.userId,
+            commentsEnabled: posts.commentsEnabled,
+            commentsCount: posts.commentsCount,
+            subject: posts.subject,
+          })
+          .from(posts)
+          .where(and(eq(posts.id, postId), eq(posts.isActive, true)))
           .limit(1);
 
-        if (firstComment) {
-          const firstCommentTime = new Date(firstComment.createdAt);
-          const expiresAt = new Date(
-            firstCommentTime.getTime() + 48 * 60 * 60 * 1000
-          );
-          const now = new Date();
+        console.log("[CREATE_COMMENT][POST_FETCHED]", {
+          userId,
+          postId,
+          postFound: !!fetchedPost,
+        });
 
-          if (now > expiresAt) {
-            return res.status(403).json({
-              error:
-                "Comment period has expired (48 hours after first comment)",
-            });
-          }
+        if (!fetchedPost) {
+          throw new Error("Post not found or inactive");
         }
-      }
 
-      // Validate parent comment if replying
-      let rootCommentId = null;
-      let parentCommentOwner = null;
+        // Check if comments are enabled
+        if (!fetchedPost.commentsEnabled) {
+          throw new Error("Comments are not enabled for this post");
+        }
+
+        return fetchedPost;
+      });
+
+      // === STEP 3: Check if this is the first comment ===
+      const [firstComment] = await db
+        .select({ createdAt: comments.createdAt })
+        .from(comments)
+        .where(and(eq(comments.postId, postId), eq(comments.isActive, true)))
+        .orderBy(comments.createdAt)
+        .limit(1);
+
+      const isFirstComment = !firstComment;
+
+      console.log("[CREATE_COMMENT][FIRST_COMMENT_CHECK]", {
+        userId,
+        postId,
+        firstCommentAt: firstComment?.createdAt || null,
+      });
+
+      // === STEP 4: Validate parent comment if replying ===
       if (parentCommentId) {
         const [parentComment] = await db
-          .select({
-            id: comments.id,
-            userId: comments.userId,
-            parentCommentId: comments.parentCommentId,
-          })
+          .select({ id: comments.id, postId: comments.postId })
           .from(comments)
           .where(
-            and(eq(comments.id, parentCommentId), eq(comments.isActive, true))
+            and(
+              eq(comments.id, parentCommentId),
+              eq(comments.isActive, true)
+            )
           )
           .limit(1);
 
@@ -3270,140 +3233,233 @@ const PostController = {
           return res.status(404).json({ error: "Parent comment not found" });
         }
 
-        rootCommentId = parentComment.parentCommentId || parentComment.id;
-        parentCommentOwner = parentComment.userId;
+        if (parentComment.postId !== postId) {
+          return res.status(400).json({
+            error: "Parent comment does not belong to this post",
+          });
+        }
       }
 
-      // Get chatroom identity
-      const chatroomIdentity =
-        await chatroomUsernameService.getChatroomUsername(userId, postId);
+      // === STEP 5: Get or create chatroom identity ===
+      let chatroomIdentity = await db
+        .select()
+        .from(chatroomIdentities)
+        .where(
+          and(
+            eq(chatroomIdentities.userId, userId),
+            eq(chatroomIdentities.postId, postId)
+          )
+        )
+        .limit(1)
+        .then((rows) => rows[0]);
 
-      const result = await db.transaction(async (tx) => {
-        // Check if this is the FIRST comment (timer starts now!)
-        const isFirstComment = post.commentsCount === 0;
+      if (!chatroomIdentity) {
+        const { color, word } = generateChatroomIdentity();
+        const chatroomUsername = `${color}${word}`;
 
-        // Create comment
-        const [newComment] = await tx
+        [chatroomIdentity] = await db
+          .insert(chatroomIdentities)
+          .values({
+            userId,
+            postId,
+            chatroomUsername,
+            color,
+            word,
+            hasCommented: true,
+          })
+          .returning();
+      } else if (!chatroomIdentity.hasCommented) {
+        await db
+          .update(chatroomIdentities)
+          .set({ hasCommented: true })
+          .where(eq(chatroomIdentities.id, chatroomIdentity.id));
+      }
+
+      console.log("[CREATE_COMMENT][CHATROOM_IDENTITY]", {
+        userId,
+        chatroomUsername: chatroomIdentity.chatroomUsername,
+      });
+
+      // === STEP 6: Create comment WITH EXPLICIT TRANSACTION ===
+      const newComment = await db.transaction(async (tx) => {
+        // Insert the comment
+        const [createdComment] = await tx
           .insert(comments)
           .values({
             postId,
             userId,
             content: content.trim(),
-            parentCommentId,
-            mentions: JSON.stringify(mentions),
+            parentCommentId: parentCommentId || null,
             chatroomUsername: chatroomIdentity.chatroomUsername,
+            mentions: [], // You can implement mention extraction here
+            isActive: true,
+            createdAt: new Date(),
+            updatedAt: new Date(),
           })
           .returning();
 
+        console.log("[CREATE_COMMENT][COMMENT_CREATED]", {
+          userId,
+          commentId: createdComment.id,
+          content: createdComment.content,
+          isFirstComment,
+        });
+
         // Update post comment count
-        const updateData = {
-          commentsCount: sql`${posts.commentsCount} + 1`,
-          updatedAt: new Date(),
-        };
-
-        // If this is the first comment, ensure chatroom opener is set
-        // (in case someone commented without opening chatroom first)
-        if (isFirstComment && !post.openedBy) {
-          updateData.openedBy = userId;
-          updateData.openedByUsername = chatroomIdentity.chatroomUsername;
-        }
-
-        await tx.update(posts).set(updateData).where(eq(posts.id, postId));
-
-        // Mark user as having commented
         await tx
-          .update(chatroomIdentities)
-          .set({ hasCommented: true })
-          .where(
-            and(
-              eq(chatroomIdentities.userId, userId),
-              eq(chatroomIdentities.postId, postId)
-            )
-          );
+          .update(posts)
+          .set({
+            commentsCount: sql`${posts.commentsCount} + 1`,
+            updatedAt: new Date(),
+          })
+          .where(eq(posts.id, postId));
 
-        if (isFirstComment) {
-          console.log(
-            `🚀 FIRST COMMENT posted on post ${postId} by ${chatroomIdentity.chatroomUsername} - 48-hour timer STARTED!`
-          );
+        // If this is the first comment and post hasn't been opened yet
+        if (isFirstComment && !post.openedBy) {
+          await tx
+            .update(posts)
+            .set({
+              openedBy: userId,
+              openedByUsername: chatroomIdentity.chatroomUsername,
+              updatedAt: new Date(),
+            })
+            .where(eq(posts.id, postId));
         }
 
-        return { newComment, isFirstComment };
+        // CRITICAL: Return the created comment
+        return createdComment;
       });
 
-      // === NOTIFICATION LOGIC ===
+      console.log("[CREATE_COMMENT][SUCCESS]", {
+        userId,
+        postId,
+        commentId: newComment.id,
+        content: newComment.content,
+      });
 
-      // 1. Notify post owner about the comment (if commenter is not the post owner) and also it is not a reply
-      if (!parentCommentId && post.userId !== userId) {
-        await NotificationService.notifyPostComment(
-          post.userId,
-          userId,
-          postId,
-          content.trim(),
-          {
-            subject: post.subject,
-            categories: post.categories,
+      // === STEP 7: Create notifications (AFTER transaction commits) ===
+      try {
+        // Notify post author (if not commenting on own post)
+        if (post.userId !== userId && !parentCommentId) {
+          await db.insert(notifications).values({
+            userId: post.userId,
+            type: "post_comment",
+            actorId: userId,
+            postId: postId,
+            commentId: newComment.id,
+            message: `${chatroomIdentity.chatroomUsername} commented on your post: "${post.subject}"`,
+            metadata: {
+              postSubject: post.subject,
+              commentPreview: content.substring(0, 50),
+              chatroomUsername: chatroomIdentity.chatroomUsername,
+            },
+            isRead: false,
+            createdAt: new Date(),
+          });
+        }
 
+        // Notify parent comment author (if replying)
+        if (parentCommentId) {
+          const [parentComment] = await db
+            .select({
+              userId: comments.userId,
+              content: comments.content,
+            })
+            .from(comments)
+            .where(eq(comments.id, parentCommentId))
+            .limit(1);
+
+          if (parentComment && parentComment.userId !== userId) {
+            await db.insert(notifications).values({
+              userId: parentComment.userId,
+              type: "comment_reply",
+              actorId: userId,
+              postId: postId,
+              commentId: newComment.id,
+              parentCommentId: parentCommentId,
+              message: `${chatroomIdentity.chatroomUsername} replied to your comment`,
+              metadata: {
+                parentCommentPreview: parentComment.content.substring(0, 50),
+                replyPreview: content.substring(0, 50),
+                chatroomUsername: chatroomIdentity.chatroomUsername,
+              },
+              isRead: false,
+              createdAt: new Date(),
+            });
           }
-        );
+        }
+      } catch (notificationError) {
+        console.error("[CREATE_COMMENT][NOTIFICATION_ERROR]", notificationError);
+        // Don't fail the request if notifications fail
       }
 
-      // 2. If this is a reply, notify the parent comment owner
-      if (
-        parentCommentId &&
-        parentCommentOwner &&
-        parentCommentOwner !== userId
-      ) {
-        await NotificationService.notifyCommentReply(
-          parentCommentOwner,
-          userId,
-          result.newComment.id,
-          parentCommentId,
-          postId,
-          content.trim(), // reply content
-          {
-            subject: post.subject,
-            categories: post.categories
-          }
-        );
-      }
+      // === STEP 8: Fetch the complete comment data for response ===
+      // IMPORTANT: Add a small delay to ensure database consistency
+      await new Promise(resolve => setTimeout(resolve, 100));
 
-      // Format comment for response
-      const formattedComment = {
-        id: result.newComment.id,
-        content: result.newComment.content,
-        parentCommentId: result.newComment.parentCommentId,
-        mentions: result.newComment.mentions,
-        likes: result.newComment.likes,
-        createdAt: result.newComment.createdAt,
-        userId: result.newComment.userId,
-        chatroomUsername: chatroomIdentity.chatroomUsername,
-        userDisplayName: chatroomIdentity.chatroomUsername,
-        username: chatroomIdentity.chatroomUsername,
-        timeAgo: getTimeAgo(result.newComment.createdAt),
-        isLiked: false,
-        color: chatroomIdentity.color,
-        word: chatroomIdentity.word,
-        replies: [],
-        rootCommentId,
-      };
+      const [completeComment] = await db
+        .select({
+          id: comments.id,
+          content: comments.content,
+          parentCommentId: comments.parentCommentId,
+          mentions: comments.mentions,
+          likes: comments.likes,
+          createdAt: comments.createdAt,
+          userId: comments.userId,
+          chatroomUsername: comments.chatroomUsername,
+          identityId: chatroomIdentities.id,
+          color: chatroomIdentities.color,
+          word: chatroomIdentities.word,
+        })
+        .from(comments)
+        .leftJoin(
+          chatroomIdentities,
+          and(
+            eq(chatroomIdentities.userId, comments.userId),
+            eq(chatroomIdentities.postId, comments.postId)
+          )
+        )
+        .where(eq(comments.id, newComment.id))
+        .limit(1);
 
-      // Return timer information
-      const responseData = {
-        comment: formattedComment,
-        chatroomInfo: {
-          openedBy: post.openedByUsername || chatroomIdentity.chatroomUsername,
-          timerStarted: result.isFirstComment, // TRUE only if this was the first comment
-          timeRemaining: result.isFirstComment ? 48 * 60 : null, // 48 hours in minutes, only if timer just started
+      // === STEP 9: Return response ===
+      return res.status(201).json({
+        comment: {
+          ...completeComment,
+          timeAgo: getTimeAgo(completeComment.createdAt),
+          userDisplayName: completeComment.chatroomUsername || "Anonymous",
+          username: completeComment.chatroomUsername || "Anonymous",
+          isLiked: false,
+          replies: [],
         },
-      };
+        isFirstComment,
+      });
 
-      res.status(201).json(responseData);
     } catch (error) {
-      console.error("Error creating comment:", error);
-      res.status(500).json({ error: "Failed to create comment" });
-    }
-  },
+      console.error("[CREATE_COMMENT][ERROR]", {
+        userId,
+        postId,
+        error: error.message,
+        stack: error.stack,
+      });
 
+      if (error.message === "Post not found or inactive") {
+        return res.status(404).json({ error: "Post not found" });
+      }
+
+      if (error.message === "Comments are not enabled for this post") {
+        return res.status(403).json({
+          error: "Comments are not enabled for this post",
+        });
+      }
+
+      return res.status(500).json({
+        error: "Failed to create comment",
+        details: process.env.NODE_ENV === "development" ? error.message : undefined,
+      });
+    }
+  }
+  ,
   async getPostStatus(req, res) {
     try {
       const { postId } = req.params;
@@ -5228,6 +5284,217 @@ const PostController = {
       });
     }
   },
+
+  // async toggleLike(req, res) {
+  //   try {
+  //     const { postId } = req.params;
+  //     const userId = req.userData.id;
+
+  //     // Get current post data
+  //     const currentPost = await db
+  //       .select({
+  //         id: posts.id,
+  //         userId: posts.userId,
+  //         subject: posts.subject,
+  //         likes: posts.likes,
+  //         thresholdMet: posts.thresholdMet,
+  //         commentsEnabled: posts.commentsEnabled,
+  //         createdAt: posts.createdAt,
+  //       })
+  //       .from(posts)
+  //       .where(eq(posts.id, postId))
+  //       .limit(1);
+
+  //     if (currentPost.length === 0) {
+  //       return res.status(404).json({
+  //         success: false,
+  //         error: "Post not found"
+  //       });
+  //     }
+
+  //     const post = currentPost[0];
+
+  //     // Check if user already liked this post
+  //     const existing = await db
+  //       .select()
+  //       .from(postInteractions)
+  //       .where(
+  //         and(
+  //           eq(postInteractions.userId, userId),
+  //           eq(postInteractions.postId, postId),
+  //           eq(postInteractions.type, "like")
+  //         )
+  //       )
+  //       .limit(1);
+
+  //     const isCurrentlyLiked = existing.length > 0;
+
+  //     if (isCurrentlyLiked) {
+  //       // ============ UNLIKE LOGIC ============
+  //       const newLikes = post.likes - 1;
+
+  //       // CRITICAL CHECK: Prevent unliking if this would break the threshold
+  //       if (post.thresholdMet && newLikes < 1) {
+  //         return res.status(400).json({
+  //           success: false,
+  //           error: "Cannot unlike - this would cause the post to lose its threshold status",
+  //           message: "Action not permitted",
+  //           canUnlike: false,
+  //         });
+  //       }
+
+  //       //  Use transaction for atomic operations
+  //       await db.transaction(async (tx) => {
+  //         // Delete the like interaction
+  //         await tx
+  //           .delete(postInteractions)
+  //           .where(eq(postInteractions.id, existing[0].id));
+
+  //         // Update post likes count
+  //         await tx
+  //           .update(posts)
+  //           .set({
+  //             likes: newLikes,
+  //             updatedAt: new Date(),
+  //           })
+  //           .where(eq(posts.id, postId));
+
+  //         //  Decrement user's liked posts count
+  //         await tx
+  //           .update(users)
+  //           .set({
+  //             likedPostsCount: sql`GREATEST(COALESCE(${users.likedPostsCount}, 0) - 1, 0)`,
+  //           })
+  //           .where(eq(users.id, userId));
+  //       });
+
+  //       console.log(`✅ Post unliked: ${postId} by user ${userId}`);
+
+  //       return res.json({
+  //         success: true,
+  //         liked: false,
+  //         message: "Post unliked",
+  //         likes: newLikes,
+  //         canUnlike: true,
+  //       });
+  //     } else {
+  //       // ============ LIKE LOGIC ============
+  //       const newLikes = post.likes + 1;
+  //       const postCreatedAt = new Date(post.createdAt);
+  //       const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+  //       const isPostWithin48Hours = postCreatedAt >= fortyEightHoursAgo;
+
+  //       let updateData = {
+  //         likes: newLikes,
+  //         updatedAt: new Date(),
+  //       };
+
+  //       let thresholdJustMet = false;
+  //       let commentsJustEnabled = false;
+
+  //       // Update threshold status if just met
+  //       if (!post.thresholdMet && newLikes >= 1) {
+  //         updateData.thresholdMet = true;
+  //         updateData.thresholdMetAt = new Date();
+  //         thresholdJustMet = true;
+  //         console.log(
+  //           `🎯 INSTANT: Threshold met for post ${postId} (${newLikes}/1 likes)`
+  //         );
+  //       }
+
+  //       // Enable comments if threshold met and post is within 48 hours
+  //       if (!post.commentsEnabled && newLikes >= 1 && isPostWithin48Hours) {
+  //         updateData.commentsEnabled = true;
+  //         updateData.commentsEnabledAt = new Date();
+  //         commentsJustEnabled = true;
+  //         console.log(
+  //           `💬 INSTANT: Comments enabled for post ${postId} (${newLikes} likes)`
+  //         );
+  //       }
+
+  //       // Use transaction for atomic operations
+  //       await db.transaction(async (tx) => {
+  //         // Insert the like interaction
+  //         await tx.insert(postInteractions).values({
+  //           userId,
+  //           postId,
+  //           type: "like",
+  //         });
+
+  //         // Update post
+  //         await tx.update(posts).set(updateData).where(eq(posts.id, postId));
+
+  //         // Increment user's liked posts count
+  //         await tx
+  //           .update(users)
+  //           .set({
+  //             likedPostsCount: sql`COALESCE(${users.likedPostsCount}, 0) + 1`,
+  //           })
+  //           .where(eq(users.id, userId));
+  //       });
+
+  //       console.log(`✅ Post liked: ${postId} by user ${userId}`);
+
+  //       return res.json({
+  //         success: true,
+  //         liked: true,
+  //         message: "Post liked",
+  //         likes: newLikes,
+  //         thresholdMet: newLikes >= 1,
+  //         commentsEnabled: newLikes >= 1 && isPostWithin48Hours,
+  //         thresholdJustMet,
+  //         commentsJustEnabled,
+  //         canUnlike: newLikes > 1,
+  //       });
+  //     }
+  //   } catch (error) {
+  //     console.error("Error toggling like:", error);
+
+  //     // Handle duplicate like gracefully (idempotency)
+  //     if (error.cause?.code === "23505") {
+  //       return res.status(400).json({
+  //         success: false,
+  //         error: "You have already liked this post",
+  //         liked: true,
+  //       });
+  //     }
+
+  //     return res.status(500).json({
+  //       success: false,
+  //       error: "Failed to toggle like"
+  //     });
+  //   }
+  // },
+
+  // async checkPostingEligibility(req, res) {
+  //   try {
+  //     const userId = req.userData.id;
+
+  //     // Use likedPostsCount from users table (faster and more reliable)
+  //     const [user] = await db
+  //       .select({ likedPostsCount: users.likedPostsCount })
+  //       .from(users)
+  //       .where(eq(users.id, userId));
+
+  //     const likesCount = user?.likedPostsCount || 0;
+  //     const canPost = likesCount >= 5;
+
+  //     return res.json({
+  //       success: true,
+  //       canPost,
+  //       likesCount: likesCount,
+  //       likesRequired: 5,
+  //       likesRemaining: Math.max(0, 5 - likesCount),
+  //     });
+  //   } catch (error) {
+  //     console.error("Error checking posting eligibility:", error);
+  //     return res.status(500).json({
+  //       success: false,
+  //       error: "Failed to check posting eligibility"
+  //     });
+  //   }
+  // },
+
 
 };
 
