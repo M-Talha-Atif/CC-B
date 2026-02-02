@@ -2031,7 +2031,7 @@ const PostController = {
           updateData.thresholdMetAt = new Date();
           thresholdJustMet = true;
           console.log(
-            `ðŸŽ¯ INSTANT: Threshold met for post ${postId} (${newLikes}/1 likes)`
+            `INSTANT: Threshold met for post ${postId} (${newLikes}/1 likes)`
           );
         }
 
@@ -2041,23 +2041,12 @@ const PostController = {
           updateData.commentsEnabledAt = new Date();
           commentsJustEnabled = true;
           console.log(
-            `ðŸ’¬ INSTANT: Comments enabled for post ${postId} (${newLikes} likes)`
+            `INSTANT: Comments enabled for post ${postId} (${newLikes} likes)`
           );
         }
 
         await db.update(posts).set(updateData).where(eq(posts.id, postId));
 
-        // === NOTIFICATION LOGIC - ONLY ON LIKE ===
-        // Don't notify if user is liking their own post
-        // if (post.userId !== userId) {
-        //   const NotificationService = require("../services/notificationService");
-        //   await NotificationService.notifyPostLike(
-        //     post.userId,
-        //     userId,
-        //     postId,
-        //     post.subject
-        //   );
-        // }
 
         res.json({
           liked: true,
