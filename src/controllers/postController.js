@@ -1998,6 +1998,8 @@ const PostController = {
 
         // NO NOTIFICATION ON UNLIKE
 
+        console.log("Post unliked")
+
         res.json({
           liked: false,
           message: "Post unliked",
@@ -2046,6 +2048,8 @@ const PostController = {
         }
 
         await db.update(posts).set(updateData).where(eq(posts.id, postId));
+
+        console.log("Post liked")
 
 
         res.json({
@@ -3129,7 +3133,6 @@ const PostController = {
   },
 
   async createComment(req, res) {
-
     const {
       postId,
       content,
@@ -3150,44 +3153,43 @@ const PostController = {
       if (!content || content.trim().length === 0) {
         return res.status(400).json({ error: "Comment content is required" });
       }
-
       if (content.length > 500) {
         return res.status(400).json({
           error: "Comment content must be 500 characters or less",
         });
       }
 
-      // === STEP 2: Fetch post with transaction ===
-      const post = await db.transaction(async (tx) => {
-        const [fetchedPost] = await tx
-          .select({
-            id: posts.id,
-            userId: posts.userId,
-            commentsEnabled: posts.commentsEnabled,
-            commentsCount: posts.commentsCount,
-            subject: posts.subject,
-          })
-          .from(posts)
-          .where(and(eq(posts.id, postId), eq(posts.isActive, true)))
-          .limit(1);
+      // === STEP 2: Fetch post ===
+      const [post] = await db
+        .select({
+          id: posts.id,
+          userId: posts.userId,
+          commentsEnabled: posts.commentsEnabled,
+          commentsCount: posts.commentsCount,
+          categories: posts.categories,
+          subject: posts.subject,
+          openedBy: posts.openedBy,
+        })
+        .from(posts)
+        .where(and(eq(posts.id, postId), eq(posts.isActive, true)))
+        .limit(1);
 
-        console.log("[CREATE_COMMENT][POST_FETCHED]", {
-          userId,
-          postId,
-          postFound: !!fetchedPost,
-        });
-
-        if (!fetchedPost) {
-          throw new Error("Post not found or inactive");
-        }
-
-        // Check if comments are enabled
-        if (!fetchedPost.commentsEnabled) {
-          throw new Error("Comments are not enabled for this post");
-        }
-
-        return fetchedPost;
+      console.log("[CREATE_COMMENT][POST_FETCHED]", {
+        userId,
+        postId,
+        postFound: !!post,
       });
+
+      if (!post) {
+        return res.status(404).json({ error: "Post not found or inactive" });
+      }
+
+      // Check if comments are enabled
+      if (!post.commentsEnabled) {
+        return res.status(403).json({
+          error: "Comments are not enabled for this post"
+        });
+      }
 
       // === STEP 3: Check if this is the first comment ===
       const [firstComment] = await db
@@ -3203,6 +3205,7 @@ const PostController = {
         userId,
         postId,
         firstCommentAt: firstComment?.createdAt || null,
+        isFirstComment,
       });
 
       // === STEP 4: Validate parent comment if replying ===
@@ -3269,7 +3272,7 @@ const PostController = {
         chatroomUsername: chatroomIdentity.chatroomUsername,
       });
 
-      // === STEP 6: Create comment WITH EXPLICIT TRANSACTION ===
+      // === STEP 6: Create comment in a SINGLE transaction ===
       const newComment = await db.transaction(async (tx) => {
         // Insert the comment
         const [createdComment] = await tx
@@ -3280,7 +3283,7 @@ const PostController = {
             content: content.trim(),
             parentCommentId: parentCommentId || null,
             chatroomUsername: chatroomIdentity.chatroomUsername,
-            mentions: [], // You can implement mention extraction here
+            mentions: [],
             isActive: true,
             createdAt: new Date(),
             updatedAt: new Date(),
@@ -3315,7 +3318,6 @@ const PostController = {
             .where(eq(posts.id, postId));
         }
 
-        // CRITICAL: Return the created comment
         return createdComment;
       });
 
@@ -3326,25 +3328,24 @@ const PostController = {
         content: newComment.content,
       });
 
-      // === STEP 7: Create notifications (AFTER transaction commits) ===
+      // === STEP 7: Create notifications AFTER transaction commits ===
+      // Wait briefly to ensure comment is fully committed
+      await new Promise(resolve => setTimeout(resolve, 150));
+
       try {
         // Notify post author (if not commenting on own post)
         if (post.userId !== userId && !parentCommentId) {
-          await db.insert(notifications).values({
-            userId: post.userId,
-            type: "post_comment",
-            actorId: userId,
-            postId: postId,
-            commentId: newComment.id,
-            message: `${chatroomIdentity.chatroomUsername} commented on your post: "${post.subject}"`,
-            metadata: {
-              postSubject: post.subject,
-              commentPreview: content.substring(0, 50),
-              chatroomUsername: chatroomIdentity.chatroomUsername,
-            },
-            isRead: false,
-            createdAt: new Date(),
-          });
+          // FIX: Removed duplicate username from message
+          await NotificationService.notifyPostComment(
+            post.userId,
+            userId,
+            postId,
+            content,
+            {
+              subject: post.subject,
+              categories: post.categories, 
+            }
+          );
         }
 
         // Notify parent comment author (if replying)
@@ -3359,33 +3360,27 @@ const PostController = {
             .limit(1);
 
           if (parentComment && parentComment.userId !== userId) {
-            await db.insert(notifications).values({
-              userId: parentComment.userId,
-              type: "comment_reply",
-              actorId: userId,
-              postId: postId,
-              commentId: newComment.id,
-              parentCommentId: parentCommentId,
-              message: `${chatroomIdentity.chatroomUsername} replied to your comment`,
-              metadata: {
-                parentCommentPreview: parentComment.content.substring(0, 50),
-                replyPreview: content.substring(0, 50),
-                chatroomUsername: chatroomIdentity.chatroomUsername,
-              },
-              isRead: false,
-              createdAt: new Date(),
-            });
+            await NotificationService.notifyCommentReply(
+              parentComment.userId,
+              userId,
+              newComment.id,
+              parentCommentId,
+              postId,
+              content,
+              {
+                subject: post.subject,
+                categories: post.categories, 
+              }
+            );
           }
         }
       } catch (notificationError) {
         console.error("[CREATE_COMMENT][NOTIFICATION_ERROR]", notificationError);
         // Don't fail the request if notifications fail
+        // The comment was still created successfully
       }
 
-      // === STEP 8: Fetch the complete comment data for response ===
-      // IMPORTANT: Add a small delay to ensure database consistency
-      await new Promise(resolve => setTimeout(resolve, 100));
-
+      // === STEP 8: Fetch complete comment data for response ===
       const [completeComment] = await db
         .select({
           id: comments.id,
@@ -3410,6 +3405,28 @@ const PostController = {
         )
         .where(eq(comments.id, newComment.id))
         .limit(1);
+
+      if (!completeComment) {
+        // This shouldn't happen, but handle gracefully
+        console.error("[CREATE_COMMENT][FETCH_FAILED]", {
+          commentId: newComment.id,
+        });
+
+        // Return minimal data
+        return res.status(201).json({
+          comment: {
+            id: newComment.id,
+            content: newComment.content,
+            createdAt: newComment.createdAt,
+            chatroomUsername: chatroomIdentity.chatroomUsername,
+            likes: 0,
+            isLiked: false,
+            replies: [],
+            timeAgo: getTimeAgo(newComment.createdAt),
+          },
+          isFirstComment,
+        });
+      }
 
       // === STEP 9: Return response ===
       return res.status(201).json({
