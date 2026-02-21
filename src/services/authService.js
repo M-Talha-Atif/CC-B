@@ -85,7 +85,6 @@ const authService = {
               password: hashedPassword,
               userType,
               personalReferralCode: referral,
-
               firstName: null,
               lastName: null,
               profilePicture: null,
@@ -147,7 +146,7 @@ const authService = {
             user: userForResponse,
             progress,
             action: "login",
-            isNewUser: userData.emailVerified==false, // new user then email verified should be false
+            isNewUser: userData.emailVerified == false, // new user then email verified should be false
           };
         }
       }
@@ -191,6 +190,47 @@ const authService = {
       };
     } catch (error) {
       throw new Error(error.message || "Failed to register or login user");
+    }
+  },
+
+  async checkUserAccess(userId) {
+
+    console.log("User access is checked")
+
+    try {
+      const [user] = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          status: users.status,
+          isAnonymous: users.isAnonymous,
+          anonymousId: users.anonymousId,
+          profileCompleted: users.profileCompleted,
+          anonymousActivatedAt: users.anonymousActivatedAt,
+          userType: users.userType,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+
+      if (!user) {
+        throw new Error("User not found");
+      }
+
+      const canAccessProtectedPages =
+        user.status === "approved" &&
+        user.profileCompleted === true &&
+        user.isAnonymous === true;
+
+      return {
+        userType: user.userType,
+        canAccess: user.status === "approved",
+        isAnonymous: user.isAnonymous,
+        status: user.status,
+        profileCompleted: user.profileCompleted,
+      };
+    } catch (error) {
+      throw new Error(error.message || "Failed to check user access");
     }
   },
 
@@ -949,40 +989,7 @@ const authService = {
     }
   },
 
-  async checkUserAccess(userId) {
 
-    console.log("User access is checked")
-
-    try {
-      const [user] = await db
-        .select({
-          id: users.id,
-          email: users.email,
-          status: users.status,
-          isAnonymous: users.isAnonymous,
-          anonymousId: users.anonymousId,
-          anonymousActivatedAt: users.anonymousActivatedAt,
-          userType: users.userType,
-        })
-        .from(users)
-        .where(eq(users.id, userId))
-        .limit(1);
-
-      if (!user) {
-        throw new Error("User not found");
-      }
-
-      return {
-        userType: user.userType,
-        canAccess: user.status === "approved",
-        isAnonymous: user.isAnonymous,
-        status: user.status,
-        profileCompleted: user.profileCompleted,
-      };
-    } catch (error) {
-      throw new Error(error.message || "Failed to check user access");
-    }
-  },
 
   // Add these methods to your authService.js
   async findUserByEmail(email) {

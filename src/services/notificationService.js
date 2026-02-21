@@ -92,6 +92,7 @@ const NotificationService = {
   async notifyPostComment(
     postOwnerId,
     actorId,
+    commentId,
     postId,
     commentContent,
     post
@@ -105,6 +106,7 @@ const NotificationService = {
       userId: postOwnerId,
       actorId,
       type: "post_comment",
+      commentId,
       postId,
       message: "commented on your post",
       metadata: {

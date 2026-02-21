@@ -221,7 +221,7 @@ const authController = {
 
   async checkEmailExists(req, res) {
     try {
-      const { email } = req.body;
+      const { email, authMode = 'signup' } = req.body;
       if (!email) {
         return res.status(400).json({
           success: false,
@@ -229,11 +229,14 @@ const authController = {
         });
       }
 
+  
+
       const normalizedEmail = email.toLowerCase().trim();
 
       // Extract domain from email
       const emailDomain = normalizedEmail.split('@')[1];
 
+      console.log("Auth mode:", authMode);
       console.log("Checking email:", normalizedEmail);
       console.log("Email domain:", emailDomain);
 
@@ -245,19 +248,47 @@ const authController = {
           id: users.id,
           email: users.email,
           status: users.status,
+          emailVerified: users.emailVerified,
         })
         .from(users)
         .where(sql`LOWER(${users.email}) = ${normalizedEmail}`)
         .limit(1);
 
-      if (existingUser.length > 0 && existingUser[0].status !== "rejected") {
-        return res.status(200).json({
-          success: true,
-          data: {
-            exists: true,
-            reason: "email_exists",
-          },
-        });
+
+      if (existingUser.length > 0) {
+
+        console.log("User exists")
+
+        // if user is rejected, he should sign up not login, should not be able to login
+        if (existingUser[0].status === "rejected") {
+
+          return res.status(200).json({
+
+            success: true,
+            data: {
+              exists: false,
+            },
+          });
+
+        }
+
+        // email verified then he can login in state of pending or approved
+
+        if (existingUser[0].status !== "rejected" && existingUser[0].emailVerified !== false) {
+
+          console.log("Either pending or approved but email exists")
+
+          // if user is approved or pending, he can login
+          return res.status(200).json({
+            success: true,
+            data: {
+              exists: true,
+              reason: "email_exists",
+            },
+          });
+
+        }
+
       }
 
       // ============================================
@@ -296,8 +327,10 @@ const authController = {
           return false;
         }
       });
-
+      
+      // remain same for login and signup
       if (emailExistsInBackup) {
+        console.log("Email exists in backup")
         return res.status(200).json({
           success: true,
           data: {
@@ -308,10 +341,23 @@ const authController = {
       }
 
       // ============================================
-      // CHECK 3: Domain match (NEW - ONLY FOR APPROVED USERS)
+      // CRITICAL: For LOGIN - if we reach here, email doesn't exist
+      // ============================================
+      if (authMode === 'login') {
+        return res.status(200).json({
+          success: true,
+          data: {
+            exists: false, // Email doesn't exist, user should signup
+          },
+        });
+      }
+
+      // ============================================
+      // CHECK 3: Domain match (NEW - ONLY FOR APPROVED USERS) and for signup mode only
       // ============================================
 
-      // Get all approved users with their emails
+      if (authMode === 'signup') {
+         // Get all approved users with their emails
       const allApprovedUsers = await db
         .select({
           id: users.id,
@@ -362,6 +408,11 @@ const authController = {
           },
         });
       }
+
+     }
+
+
+     
 
       // Email and domain are available
       return res.status(200).json({
@@ -748,7 +799,7 @@ const authController = {
 
   async checkEmailVerificationStatus(req, res) {
     try {
-      const userId = req.user.id; // Assuming you have middleware that sets req.user
+      const userId = req.user.id;
 
       if (!userId) {
         return res.status(400).json({

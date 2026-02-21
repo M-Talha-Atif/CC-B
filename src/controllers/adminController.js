@@ -535,7 +535,14 @@ const AdminController = {
 
   async getPendingUsers(req, res) {
     try {
-      const pendingUsers = await adminService.getPendingUsers();
+
+       const { page = 1, limit = 10, search = "" } = req.query;
+       
+      const pendingUsers = await adminService.getPendingUsers({
+        page: parseInt(page),
+        limit: parseInt(limit),
+        search: search.trim(),
+      });
 
       res.status(200).json({
         success: true,

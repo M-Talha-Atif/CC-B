@@ -1392,7 +1392,8 @@ const PostController = {
         page = 1,
         limit = 10,
         sortBy = "newest",
-        categories = "", // comma-separated categories to filter by
+        mainCategory = "", // Main category: New, Popular, Creatives, Couples, My Posts, Bookmark
+        subFilter = "",    // Sub filter: Photographer, Videographer, Florist, Planner, or "all"
       } = req.query;
 
       // Check if search query is provided
@@ -1402,22 +1403,16 @@ const PostController = {
         });
       }
 
-      // UPDATED: Handle both authenticated and unauthenticated users
       const userAuthenticated = !!(req.user && req.user.id);
       const userId = userAuthenticated ? req.user.id : null;
       const offset = (page - 1) * limit;
 
       console.log(
-        `Global search - Query: "${searchQuery}", Page: ${page}, Limit: ${limit}, Sort: ${sortBy}, Categories: "${categories}", Auth: ${userAuthenticated}, UserId: ${userId || "none"
-        }`
+        `Global search - Query: "${searchQuery}", Page: ${page}, Limit: ${limit}, Sort: ${sortBy}, Main Category: "${mainCategory}", Sub Filter: "${subFilter}", Auth: ${userAuthenticated}, UserId: ${userId || "none"}`
       );
 
-      // Base condition - only active posts that are visible
-      let whereCondition = and(
-        eq(posts.isActive, true),
-        eq(posts.visibleToAuthorOnly, false), // Only public posts for global search
-        eq(posts.thresholdMet, true) // Only posts that have met threshold
-      );
+      // Base condition - only active posts
+      let whereCondition = eq(posts.isActive, true);
 
       // Add search filter - search in both subject and content
       const searchTerm = searchQuery.trim().toLowerCase();
@@ -1429,28 +1424,158 @@ const PostController = {
         )
       );
 
-      // Add category filter if provided
-      if (categories && categories.trim()) {
-        const categoryList = categories
-          .split(",")
-          .map((cat) => cat.trim())
-          .filter((cat) => cat);
-        if (categoryList.length > 0) {
-          const categoryConditions = categoryList.map(
-            (category) =>
-              sql`${posts.categories}::text LIKE ${"%" + category + "%"}`
+      // Apply category-specific filters with thresholds from getFeed
+      const applyCategoryFilter = (category, whereCondition) => {
+        const categoryName = category.trim();
+
+        switch (categoryName) {
+          case "New":
+            if (userAuthenticated && userId) {
+              return and(
+                whereCondition,
+                eq(posts.isActive, true),
+                or(
+                  // Posts that haven't met threshold (public view)
+                  and(
+                    eq(posts.thresholdMet, false),
+                    eq(posts.visibleToAuthorOnly, false)
+                  ),
+                  // Author's own posts that are author-only
+                  and(
+                    eq(posts.userId, userId),
+                    eq(posts.visibleToAuthorOnly, true)
+                  )
+                )
+              );
+            } else {
+              // For unauthenticated users, only show posts that haven't met threshold
+              return and(
+                whereCondition,
+                eq(posts.isActive, true),
+                eq(posts.thresholdMet, false),
+                eq(posts.visibleToAuthorOnly, false)
+              );
+            }
+
+          case "Popular":
+            return and(
+              whereCondition,
+              eq(posts.thresholdMet, true),
+              eq(posts.visibleToAuthorOnly, false),
+              gte(posts.likes, 3) // Popular feed requires 3+ likes
+            );
+
+          case "Couples":
+            return and(
+              whereCondition,
+              eq(posts.thresholdMet, true),
+              eq(posts.visibleToAuthorOnly, false),
+              sql`${posts.categories}::text LIKE '%Couples%'`
+            );
+
+          case "Creatives":
+            return and(
+              whereCondition,
+              eq(posts.thresholdMet, true),
+              eq(posts.visibleToAuthorOnly, false),
+              sql`${posts.categories}::text NOT LIKE '%Couples%'`
+            );
+
+          case "My Posts":
+            if (!userAuthenticated || !userId) {
+              throw new Error("Authentication required for My Posts");
+            }
+            // Only user's own posts that have met threshold
+            return and(
+              whereCondition,
+              eq(posts.userId, userId),
+              eq(posts.thresholdMet, true),
+              eq(posts.visibleToAuthorOnly, false)
+            );
+
+          case "Bookmark":
+            if (!userAuthenticated || !userId) {
+              throw new Error("Authentication required for Bookmark");
+            }
+            // Will be handled separately with join
+            return whereCondition;
+
+          default:
+            // No category specified - show all public posts that met threshold
+            return and(
+              whereCondition,
+              eq(posts.thresholdMet, true),
+              eq(posts.visibleToAuthorOnly, false)
+            );
+        }
+      };
+
+      // Handle Bookmark category separately (requires join)
+      if (mainCategory && mainCategory.trim() === "Bookmark") {
+        if (!userAuthenticated || !userId) {
+          return res.status(401).json({ error: "Authentication required for Bookmark" });
+        }
+
+        // Get saved post IDs for this user
+        const savedInteractions = await db
+          .select({ postId: postInteractions.postId })
+          .from(postInteractions)
+          .where(
+            and(
+              eq(postInteractions.userId, userId),
+              eq(postInteractions.type, "save")
+            )
           );
 
-          if (categoryConditions.length === 1) {
-            whereCondition = and(whereCondition, categoryConditions[0]);
-          } else {
-            whereCondition = and(whereCondition, or(...categoryConditions));
-          }
+        const savedPostIds = savedInteractions.map((i) => i.postId);
+
+        if (savedPostIds.length === 0) {
+          return res.json({
+            posts: [],
+            pagination: {
+              page: parseInt(page),
+              limit: parseInt(limit),
+              hasMore: false,
+              total: 0,
+            },
+            searchQuery: searchQuery,
+            appliedFilters: {
+              mainCategory: "Bookmark",
+              subFilter: null,
+              sortBy
+            },
+          });
         }
+
+        // Apply search to saved posts only
+        whereCondition = and(
+          whereCondition,
+          inArray(posts.id, savedPostIds),
+          eq(posts.isActive, true)
+        );
+      } else if (mainCategory && mainCategory.trim()) {
+        // Apply main category filter first
+        whereCondition = applyCategoryFilter(mainCategory, whereCondition);
+
+        // Then apply sub-filter if provided and not "all"
+        if (subFilter && subFilter.trim() && subFilter.trim() !== "all") {
+          const subFilterValue = subFilter.trim();
+          whereCondition = and(
+            whereCondition,
+            sql`${posts.categories}::text LIKE ${"%" + subFilterValue + "%"}`
+          );
+        }
+      } else {
+        // No category - default to public posts that met threshold
+        whereCondition = and(
+          whereCondition,
+          eq(posts.thresholdMet, true),
+          eq(posts.visibleToAuthorOnly, false)
+        );
       }
 
-      // Get sort order
-      const getSortOrder = (sortBy) => {
+      // Get sort order (with category-specific defaults)
+      const getSortOrder = (sortBy, category) => {
         switch (sortBy) {
           case "oldest":
             return asc(posts.createdAt);
@@ -1460,19 +1585,53 @@ const PostController = {
             return desc(posts.saves);
           case "newest":
           default:
-            return desc(posts.createdAt);
+            // Category-specific sorting
+            if (category === "Couples") {
+              return desc(posts.likes); // Couples sorted by likes
+            } else if (["Creatives", "Photographer", "Videographer", "Florist", "Planner"].includes(category)) {
+              return desc(posts.thresholdMetAt); // Creatives sorted by threshold met time
+            }
+            return desc(posts.createdAt); // Default: newest first
         }
       };
 
-      const orderBy = getSortOrder(sortBy);
+      const orderBy = getSortOrder(sortBy, mainCategory.trim());
 
       // Get total count
       const totalCountQuery = await db
         .select({ count: sql`COUNT(*)`.as("count") })
         .from(posts)
         .where(whereCondition);
-
       const totalCount = parseInt(totalCountQuery[0]?.count || 0);
+
+      // Special handling for Couples category (max 10 posts)
+      let queryLimit = parseInt(limit);
+      let maxResults = totalCount;
+
+      if (mainCategory && mainCategory.trim() === "Couples") {
+        const maxCouplesPosts = 10;
+        maxResults = Math.min(totalCount, maxCouplesPosts);
+
+        if (offset >= maxCouplesPosts) {
+          return res.json({
+            posts: [],
+            pagination: {
+              page: parseInt(page),
+              limit: parseInt(limit),
+              hasMore: false,
+              total: maxResults,
+            },
+            searchQuery: searchQuery,
+            appliedFilters: {
+              mainCategory: "Couples",
+              subFilter: null,
+              sortBy
+            },
+          });
+        }
+
+        queryLimit = Math.min(queryLimit, maxCouplesPosts - offset);
+      }
 
       // Main search query
       const searchResults = await db
@@ -1507,7 +1666,7 @@ const PostController = {
         .leftJoin(users, eq(posts.userId, users.id))
         .where(whereCondition)
         .orderBy(orderBy)
-        .limit(parseInt(limit))
+        .limit(queryLimit)
         .offset(offset);
 
       if (searchResults.length === 0) {
@@ -1517,13 +1676,18 @@ const PostController = {
             page: parseInt(page),
             limit: parseInt(limit),
             hasMore: false,
-            total: totalCount,
+            total: maxResults,
           },
           searchQuery: searchQuery,
+          appliedFilters: {
+            mainCategory: mainCategory.trim() || null,
+            subFilter: subFilter.trim() || null,
+            sortBy
+          },
         });
       }
 
-      // UPDATED: Only get user interactions and poll votes for authenticated users
+      // Get user interactions and poll votes (only for authenticated users)
       const postIds = searchResults.map((post) => post.id);
       let interactionMap = {};
       let pollVoteMap = {};
@@ -1551,7 +1715,6 @@ const PostController = {
               ),
           ]);
 
-          // Map interactions
           userInteractions.forEach((interaction) => {
             if (!interactionMap[interaction.postId]) {
               interactionMap[interaction.postId] = {};
@@ -1564,16 +1727,21 @@ const PostController = {
           });
         } catch (error) {
           console.error("Error fetching user interactions:", error);
-          // Continue without interactions for this user
         }
       }
 
       // Format the search results
-      const formattedPosts = searchResults.map((post) => {
+      const formattedPosts = searchResults.map((post, index) => {
         const hasVoted =
           post.type === "poll" && pollVoteMap[post.id] !== undefined;
         const chatroomTimeRemaining = calculateChatroomTimeRemaining(post);
         const thresholdTimeRemaining = calculateThresholdTimeRemaining(post);
+
+        // Calculate Couples ranking
+        let couplesRanking = null;
+        if (mainCategory && mainCategory.trim() === "Couples") {
+          couplesRanking = offset + index + 1; // 1-based ranking
+        }
 
         let formattedPollOptions = null;
         if (post.type === "poll" && post.pollOptions) {
@@ -1581,7 +1749,6 @@ const PostController = {
             (sum, option) => sum + (option.votes || 0),
             0
           );
-
           formattedPollOptions = post.pollOptions.map((option, index) => ({
             text: option.text,
             percentage:
@@ -1600,8 +1767,6 @@ const PostController = {
               typeof post.quotedPostSnapshot === "string"
                 ? JSON.parse(post.quotedPostSnapshot)
                 : post.quotedPostSnapshot;
-
-            // Format quoted post poll options if needed
             if (quotedPost.type === "poll" && quotedPost.pollOptions) {
               const totalVotes = quotedPost.pollOptions.reduce(
                 (sum, option) => sum + (option.votes || 0),
@@ -1614,7 +1779,7 @@ const PostController = {
                     ? Math.round((option.votes / totalVotes) * 100 * 10) / 10
                     : 0,
                 votes: option.votes || 0,
-                isUserChoice: false, // Quoted posts never show user's vote
+                isUserChoice: false,
               }));
               quotedPost.totalVotes = totalVotes;
             }
@@ -1628,26 +1793,16 @@ const PostController = {
           ...post,
           pollOptions: formattedPollOptions,
           totalVotes: formattedPollOptions
-            ? formattedPollOptions.reduce(
-              (sum, option) => sum + option.votes,
-              0
-            )
+            ? formattedPollOptions.reduce((sum, option) => sum + option.votes, 0)
             : 0,
           timeAgo: getTimeAgo(post.createdAt),
           userDisplayName:
             post.userBusinessName ||
             `${post.userFirstName} ${post.userLastName}`.trim(),
-          // UPDATED: Default to false for unauthenticated users
-          isLiked: userAuthenticated
-            ? interactionMap[post.id]?.like || false
-            : false,
-          isSaved: userAuthenticated
-            ? interactionMap[post.id]?.save || false
-            : false,
+          isLiked: userAuthenticated ? interactionMap[post.id]?.like || false : false,
+          isSaved: userAuthenticated ? interactionMap[post.id]?.save || false : false,
           hasVoted: userAuthenticated ? hasVoted : false,
-          userVotedOption: userAuthenticated
-            ? pollVoteMap[post.id] || null
-            : null,
+          userVotedOption: userAuthenticated ? pollVoteMap[post.id] || null : null,
           commentsCount: post.commentsCount || 0,
           quotesCount: post.quotesCount || 0,
           isQuotePost: post.isQuotePost || false,
@@ -1657,8 +1812,8 @@ const PostController = {
             ? {
               timeRemaining: chatroomTimeRemaining,
               isActive: chatroomTimeRemaining > 0,
-              activeMembers: 0, // Would need separate query for this
-              totalMessages: 0, // Would need separate query for this
+              activeMembers: 0,
+              totalMessages: 0,
             }
             : null,
           thresholdData: {
@@ -1672,16 +1827,18 @@ const PostController = {
           visibilityStatus: {
             isAuthorOnly: post.visibleToAuthorOnly,
             isPublic: !post.visibleToAuthorOnly && post.thresholdMet,
-            // UPDATED: Default to false for unauthenticated users
             isOwner: userAuthenticated ? userId === post.userId : false,
           },
-          // Add search relevance score (simple implementation)
+          couplesRanking: couplesRanking,
           relevanceScore: calculateRelevanceScore(post, searchTerm),
         };
       });
 
       // Calculate pagination
-      const hasMore = offset + searchResults.length < totalCount;
+      const hasMore =
+        mainCategory && mainCategory.trim() === "Couples"
+          ? offset + searchResults.length < maxResults
+          : offset + searchResults.length < totalCount;
 
       res.json({
         posts: formattedPosts,
@@ -1689,26 +1846,352 @@ const PostController = {
           page: parseInt(page),
           limit: parseInt(limit),
           hasMore: hasMore,
-          total: totalCount,
+          total: maxResults,
         },
         searchQuery: searchQuery,
         appliedFilters: {
-          categories: categories
-            ? categories
-              .split(",")
-              .map((cat) => cat.trim())
-              .filter((cat) => cat)
-            : [],
+          mainCategory: mainCategory.trim() || null,
+          subFilter: subFilter.trim() || null,
           sortBy: sortBy,
         },
-        // UPDATED: Include authentication status in response
         userAuthenticated: userAuthenticated,
       });
     } catch (error) {
       console.error("Error in global search:", error);
+
+      // Handle authentication errors
+      if (error.message && error.message.includes("Authentication required")) {
+        return res.status(401).json({ error: error.message });
+      }
+
       res.status(500).json({ error: "Failed to perform search" });
     }
   },
+
+  // async globalSearch(req, res) {
+  //   try {
+  //     const {
+  //       query: searchQuery = "",
+  //       page = 1,
+  //       limit = 10,
+  //       sortBy = "newest",
+  //       categories = "", // comma-separated categories to filter by
+  //     } = req.query;
+
+  //     // Check if search query is provided
+  //     if (!searchQuery || searchQuery.trim().length < 2) {
+  //       return res.status(400).json({
+  //         error: "Search query must be at least 2 characters long",
+  //       });
+  //     }
+
+  //     // UPDATED: Handle both authenticated and unauthenticated users
+  //     const userAuthenticated = !!(req.user && req.user.id);
+  //     const userId = userAuthenticated ? req.user.id : null;
+  //     const offset = (page - 1) * limit;
+
+  //     console.log(
+  //       `Global search - Query: "${searchQuery}", Page: ${page}, Limit: ${limit}, Sort: ${sortBy}, Categories: "${categories}", Auth: ${userAuthenticated}, UserId: ${userId || "none"
+  //       }`
+  //     );
+
+  //     // Base condition - only active posts that are visible
+  //     let whereCondition = and(
+  //       eq(posts.isActive, true),
+  //       eq(posts.visibleToAuthorOnly, false), // Only public posts for global search
+  //       eq(posts.thresholdMet, true) // Only posts that have met threshold
+  //     );
+
+  //     // Add search filter - search in both subject and content
+  //     const searchTerm = searchQuery.trim().toLowerCase();
+  //     whereCondition = and(
+  //       whereCondition,
+  //       or(
+  //         sql`LOWER(${posts.subject}) LIKE LOWER(${"%" + searchTerm + "%"})`,
+  //         sql`LOWER(${posts.content}) LIKE LOWER(${"%" + searchTerm + "%"})`
+  //       )
+  //     );
+
+  //     // Add category filter if provided
+  //     if (categories && categories.trim()) {
+  //       const categoryList = categories
+  //         .split(",")
+  //         .map((cat) => cat.trim())
+  //         .filter((cat) => cat);
+  //       if (categoryList.length > 0) {
+  //         const categoryConditions = categoryList.map(
+  //           (category) =>
+  //             sql`${posts.categories}::text LIKE ${"%" + category + "%"}`
+  //         );
+
+  //         if (categoryConditions.length === 1) {
+  //           whereCondition = and(whereCondition, categoryConditions[0]);
+  //         } else {
+  //           whereCondition = and(whereCondition, or(...categoryConditions));
+  //         }
+  //       }
+  //     }
+
+  //     // Get sort order
+  //     const getSortOrder = (sortBy) => {
+  //       switch (sortBy) {
+  //         case "oldest":
+  //           return asc(posts.createdAt);
+  //         case "likes":
+  //           return desc(posts.likes);
+  //         case "saves":
+  //           return desc(posts.saves);
+  //         case "newest":
+  //         default:
+  //           return desc(posts.createdAt);
+  //       }
+  //     };
+
+  //     const orderBy = getSortOrder(sortBy);
+
+  //     // Get total count
+  //     const totalCountQuery = await db
+  //       .select({ count: sql`COUNT(*)`.as("count") })
+  //       .from(posts)
+  //       .where(whereCondition);
+
+  //     const totalCount = parseInt(totalCountQuery[0]?.count || 0);
+
+  //     // Main search query
+  //     const searchResults = await db
+  //       .select({
+  //         id: posts.id,
+  //         subject: posts.subject,
+  //         content: posts.content,
+  //         categories: posts.categories,
+  //         type: posts.type,
+  //         pollOptions: posts.pollOptions,
+  //         likes: posts.likes,
+  //         saves: posts.saves,
+  //         commentsCount: posts.commentsCount,
+  //         createdAt: posts.createdAt,
+  //         thresholdMet: posts.thresholdMet,
+  //         thresholdMetAt: posts.thresholdMetAt,
+  //         visibleToAuthorOnly: posts.visibleToAuthorOnly,
+  //         userId: posts.userId,
+  //         userFirstName: users.firstName,
+  //         userLastName: users.lastName,
+  //         userBusinessName: users.businessName,
+  //         userProfilePicture: users.profilePicture,
+  //         isQuotePost: posts.isQuotePost,
+  //         quotedPostId: posts.quotedPostId,
+  //         quotedPostSnapshot: posts.quotedPostSnapshot,
+  //         quotesCount: posts.quotesCount,
+  //         commentsEnabled: posts.commentsEnabled,
+  //         commentsEnabledAt: posts.commentsEnabledAt,
+  //         commentsDisabledAt: posts.commentsDisabledAt,
+  //       })
+  //       .from(posts)
+  //       .leftJoin(users, eq(posts.userId, users.id))
+  //       .where(whereCondition)
+  //       .orderBy(orderBy)
+  //       .limit(parseInt(limit))
+  //       .offset(offset);
+
+  //     if (searchResults.length === 0) {
+  //       return res.json({
+  //         posts: [],
+  //         pagination: {
+  //           page: parseInt(page),
+  //           limit: parseInt(limit),
+  //           hasMore: false,
+  //           total: totalCount,
+  //         },
+  //         searchQuery: searchQuery,
+  //       });
+  //     }
+
+  //     // UPDATED: Only get user interactions and poll votes for authenticated users
+  //     const postIds = searchResults.map((post) => post.id);
+  //     let interactionMap = {};
+  //     let pollVoteMap = {};
+
+  //     if (userAuthenticated && userId) {
+  //       try {
+  //         const [userInteractions, userPollVotes] = await Promise.all([
+  //           db
+  //             .select()
+  //             .from(postInteractions)
+  //             .where(
+  //               and(
+  //                 eq(postInteractions.userId, userId),
+  //                 inArray(postInteractions.postId, postIds)
+  //               )
+  //             ),
+  //           db
+  //             .select()
+  //             .from(pollVotes)
+  //             .where(
+  //               and(
+  //                 eq(pollVotes.userId, userId),
+  //                 inArray(pollVotes.postId, postIds)
+  //               )
+  //             ),
+  //         ]);
+
+  //         // Map interactions
+  //         userInteractions.forEach((interaction) => {
+  //           if (!interactionMap[interaction.postId]) {
+  //             interactionMap[interaction.postId] = {};
+  //           }
+  //           interactionMap[interaction.postId][interaction.type] = true;
+  //         });
+
+  //         userPollVotes.forEach((vote) => {
+  //           pollVoteMap[vote.postId] = vote.optionIndex;
+  //         });
+  //       } catch (error) {
+  //         console.error("Error fetching user interactions:", error);
+  //         // Continue without interactions for this user
+  //       }
+  //     }
+
+  //     // Format the search results
+  //     const formattedPosts = searchResults.map((post) => {
+  //       const hasVoted =
+  //         post.type === "poll" && pollVoteMap[post.id] !== undefined;
+  //       const chatroomTimeRemaining = calculateChatroomTimeRemaining(post);
+  //       const thresholdTimeRemaining = calculateThresholdTimeRemaining(post);
+
+  //       let formattedPollOptions = null;
+  //       if (post.type === "poll" && post.pollOptions) {
+  //         const totalVotes = post.pollOptions.reduce(
+  //           (sum, option) => sum + (option.votes || 0),
+  //           0
+  //         );
+
+  //         formattedPollOptions = post.pollOptions.map((option, index) => ({
+  //           text: option.text,
+  //           percentage:
+  //             totalVotes > 0
+  //               ? Math.round((option.votes / totalVotes) * 100 * 10) / 10
+  //               : 0,
+  //           votes: option.votes || 0,
+  //           isUserChoice: hasVoted && pollVoteMap[post.id] === index,
+  //         }));
+  //       }
+
+  //       let quotedPost = null;
+  //       if (post.isQuotePost && post.quotedPostSnapshot) {
+  //         try {
+  //           quotedPost =
+  //             typeof post.quotedPostSnapshot === "string"
+  //               ? JSON.parse(post.quotedPostSnapshot)
+  //               : post.quotedPostSnapshot;
+
+  //           // Format quoted post poll options if needed
+  //           if (quotedPost.type === "poll" && quotedPost.pollOptions) {
+  //             const totalVotes = quotedPost.pollOptions.reduce(
+  //               (sum, option) => sum + (option.votes || 0),
+  //               0
+  //             );
+  //             quotedPost.pollOptions = quotedPost.pollOptions.map((option) => ({
+  //               text: option.text,
+  //               percentage:
+  //                 totalVotes > 0
+  //                   ? Math.round((option.votes / totalVotes) * 100 * 10) / 10
+  //                   : 0,
+  //               votes: option.votes || 0,
+  //               isUserChoice: false, // Quoted posts never show user's vote
+  //             }));
+  //             quotedPost.totalVotes = totalVotes;
+  //           }
+  //         } catch (error) {
+  //           console.error("Error parsing quoted post snapshot:", error);
+  //           quotedPost = null;
+  //         }
+  //       }
+
+  //       return {
+  //         ...post,
+  //         pollOptions: formattedPollOptions,
+  //         totalVotes: formattedPollOptions
+  //           ? formattedPollOptions.reduce(
+  //             (sum, option) => sum + option.votes,
+  //             0
+  //           )
+  //           : 0,
+  //         timeAgo: getTimeAgo(post.createdAt),
+  //         userDisplayName:
+  //           post.userBusinessName ||
+  //           `${post.userFirstName} ${post.userLastName}`.trim(),
+  //         // UPDATED: Default to false for unauthenticated users
+  //         isLiked: userAuthenticated
+  //           ? interactionMap[post.id]?.like || false
+  //           : false,
+  //         isSaved: userAuthenticated
+  //           ? interactionMap[post.id]?.save || false
+  //           : false,
+  //         hasVoted: userAuthenticated ? hasVoted : false,
+  //         userVotedOption: userAuthenticated
+  //           ? pollVoteMap[post.id] || null
+  //           : null,
+  //         commentsCount: post.commentsCount || 0,
+  //         quotesCount: post.quotesCount || 0,
+  //         isQuotePost: post.isQuotePost || false,
+  //         quotedPostId: post.quotedPostId,
+  //         quotedPost: quotedPost,
+  //         chatroomData: post.commentsEnabled
+  //           ? {
+  //             timeRemaining: chatroomTimeRemaining,
+  //             isActive: chatroomTimeRemaining > 0,
+  //             activeMembers: 0, // Would need separate query for this
+  //             totalMessages: 0, // Would need separate query for this
+  //           }
+  //           : null,
+  //         thresholdData: {
+  //           timeRemaining: thresholdTimeRemaining,
+  //           isActive: thresholdTimeRemaining > 0 && !post.thresholdMet,
+  //           thresholdMet: post.thresholdMet,
+  //           requiredLikes: getThresholdRequirement(post.categories),
+  //           currentLikes: post.likes,
+  //           thresholdMetAt: post.thresholdMetAt,
+  //         },
+  //         visibilityStatus: {
+  //           isAuthorOnly: post.visibleToAuthorOnly,
+  //           isPublic: !post.visibleToAuthorOnly && post.thresholdMet,
+  //           // UPDATED: Default to false for unauthenticated users
+  //           isOwner: userAuthenticated ? userId === post.userId : false,
+  //         },
+  //         // Add search relevance score (simple implementation)
+  //         relevanceScore: calculateRelevanceScore(post, searchTerm),
+  //       };
+  //     });
+
+  //     // Calculate pagination
+  //     const hasMore = offset + searchResults.length < totalCount;
+
+  //     res.json({
+  //       posts: formattedPosts,
+  //       pagination: {
+  //         page: parseInt(page),
+  //         limit: parseInt(limit),
+  //         hasMore: hasMore,
+  //         total: totalCount,
+  //       },
+  //       searchQuery: searchQuery,
+  //       appliedFilters: {
+  //         categories: categories
+  //           ? categories
+  //             .split(",")
+  //             .map((cat) => cat.trim())
+  //             .filter((cat) => cat)
+  //           : [],
+  //         sortBy: sortBy,
+  //       },
+  //       // UPDATED: Include authentication status in response
+  //       userAuthenticated: userAuthenticated,
+  //     });
+  //   } catch (error) {
+  //     console.error("Error in global search:", error);
+  //     res.status(500).json({ error: "Failed to perform search" });
+  //   }
+  // },
 
   async createPost(req, res) {
     try {
@@ -1742,12 +2225,41 @@ const PostController = {
         });
       }
 
+      // Check Couples category once per day
+      if (categories.includes("Couples")) {
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const endOfDay = new Date();
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const existingCouplesPost = await db
+          .select({ id: posts.id })
+          .from(posts)
+          .where(
+            and(
+              eq(posts.userId, userId),
+              sql`${posts.categories}::text ILIKE '%Couples%'`,
+              gte(posts.createdAt, startOfDay),
+              lte(posts.createdAt, endOfDay)
+            )
+          )
+          .limit(1);
+
+        if (existingCouplesPost.length > 0) {
+          return res.status(400).json({
+            error: "Max 1 Couples post per day.",
+          });
+        }
+      }
+
+
       // ============================================
       // RATE LIMIT CHECK - ONLY CHECK, DON'T INCREMENT YET
       // ============================================
       const rateLimitResult = await checkPostRateLimit(userId, db);
 
-      if (!rateLimitResult.allowed) {
+      if (!categories.includes("Couples") && !rateLimitResult.allowed) {
         const resetTime = rateLimitResult.resetAt;
         const minutesUntilReset = Math.ceil((resetTime - new Date()) / 60000);
 
@@ -1840,33 +2352,6 @@ const PostController = {
         isQuotePost = true;
       }
 
-      // Check Couples category once per day
-      if (categories.includes("Couples")) {
-        const startOfDay = new Date();
-        startOfDay.setHours(0, 0, 0, 0);
-
-        const endOfDay = new Date();
-        endOfDay.setHours(23, 59, 59, 999);
-
-        const existingCouplesPost = await db
-          .select({ id: posts.id })
-          .from(posts)
-          .where(
-            and(
-              eq(posts.userId, userId),
-              sql`${posts.categories}::text ILIKE '%Couples%'`,
-              gte(posts.createdAt, startOfDay),
-              lte(posts.createdAt, endOfDay)
-            )
-          )
-          .limit(1);
-
-        if (existingCouplesPost.length > 0) {
-          return res.status(400).json({
-            error: "You can only create one Couples post per day.",
-          });
-        }
-      }
 
       // Format poll options
       let formattedPollOptions = null;
@@ -3339,11 +3824,12 @@ const PostController = {
           await NotificationService.notifyPostComment(
             post.userId,
             userId,
+            newComment.id,
             postId,
             content,
             {
               subject: post.subject,
-              categories: post.categories, 
+              categories: post.categories,
             }
           );
         }
@@ -3369,7 +3855,7 @@ const PostController = {
               content,
               {
                 subject: post.subject,
-                categories: post.categories, 
+                categories: post.categories,
               }
             );
           }

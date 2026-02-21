@@ -8,6 +8,8 @@ const {
   handleOptionalAnonymousUser,
 } = require("../middleware/auth");
 
+router.get("/global", optionalAuthenticateToken, postController.globalSearch);
+
 router.get("/feed/public/couples", postController.getCoupleFeed);
 
 router.get("/public/:postId", postController.getPostPublic);
@@ -21,7 +23,7 @@ router.get(
   postController.getFeed
 );
 
-router.get("/global", optionalAuthenticateToken, postController.globalSearch);
+
 
 router.use(authenticateToken);
 router.use(handleAnonymousUser);

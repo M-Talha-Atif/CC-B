@@ -1188,8 +1188,52 @@ const AdminService = {
     return code;
   },
 
-  async getPendingUsers() {
+  async getPendingUsers({ page = 1, limit = 10, search = "" } = {}) {
     try {
+      const offset = (page - 1) * limit;
+
+      const conditions = [
+        eq(users.status, "pending"),
+        ne(users.userType, "admin"),
+        isNotNull(users.phone),
+        ne(users.phone, ""),
+        isNotNull(users.businessName),
+        ne(users.businessName, ""),
+        isNotNull(users.website),
+        ne(users.website, ""),
+        isNotNull(users.instagram),
+        ne(users.instagram, ""),
+        isNotNull(users.creativeDomains)
+      ];
+
+      if (search) {
+        const searchLower = search.toLowerCase();
+
+        conditions.push(
+          or(
+            sql`LOWER(${users.email}) LIKE ${`%${searchLower}%`}`,
+            sql`LOWER(${users.firstName}) LIKE ${`%${searchLower}%`}`,
+            sql`LOWER(${users.lastName}) LIKE ${`%${searchLower}%`}`,
+            sql`LOWER(${users.businessName}) LIKE ${`%${searchLower}%`}`,
+            sql`LOWER(${users.phone}) LIKE ${`%${searchLower}%`}`,
+            sql`LOWER(${users.website}) LIKE ${`%${searchLower}%`}`,
+            sql`LOWER(${users.instagram}) LIKE ${`%${searchLower}%`}`,
+            sql`LOWER(${users.originalDataBackup}::text) LIKE ${`%${searchLower}%`}`
+          )
+        );
+      }
+
+      const whereClause = and(...conditions);
+
+      // Get total count for pagination
+      const countQuery = await db
+        .select({ count: sql`count(*)` })
+        .from(users)
+        .where(whereClause);
+
+      const total = parseInt(countQuery[0].count);
+
+      // Get paginated results
       const pendingUsers = await db
         .select({
           id: users.id,
@@ -1209,28 +1253,15 @@ const AdminService = {
           updatedAt: users.updatedAt,
         })
         .from(users)
-        .where(
-          and(
-            eq(users.status, "pending"),
-            ne(users.userType, "admin"),
-            isNotNull(users.phone),
-            ne(users.phone, ""),
-            isNotNull(users.businessName),
-            ne(users.businessName, ""),
-            isNotNull(users.website),
-            ne(users.website, ""),
-            isNotNull(users.instagram),
-            ne(users.instagram, ""),
-            isNotNull(users.creativeDomains)
-          )
-        )
-        .orderBy(asc(users.createdAt));
+        .where(whereClause)
+        .orderBy(desc(users.createdAt))
+        .limit(limit)
+        .offset(offset);
 
-      // Enrich with referral code owner details by checking referralUsage table
       // Enrich with referral code owner details by checking referralUsage table
       const enrichedUsers = await Promise.all(
         pendingUsers.map(async (user) => {
-          // 1️⃣ Replace email from backup if user is anonymous
+          //  Replace email from backup if user is anonymous
           let processedUser = { ...user }; // don't mutate original
           if (processedUser.isAnonymous && processedUser.originalDataBackup) {
             try {
@@ -1253,7 +1284,7 @@ const AdminService = {
             }
           }
 
-          // 2️⃣ Find the referral code this user used during signup
+          // Find the referral code this user used during signup
           const usageRecord = await db
             .select({
               referralCode: referralUsage.referralCode,
@@ -1262,6 +1293,7 @@ const AdminService = {
             })
             .from(referralUsage)
             .where(eq(referralUsage.usedByUserId, processedUser.id))
+            .orderBy(desc(referralUsage.usedAt))
             .limit(1);
 
           if (usageRecord.length === 0) {
@@ -1328,13 +1360,168 @@ const AdminService = {
         })
       );
 
-
-      return enrichedUsers;
+      return {
+        data: enrichedUsers,
+        pagination: {
+          page,
+          limit,
+          total,
+          pages: Math.ceil(total / limit),
+        },
+      };
     } catch (error) {
       console.error("Error in getPendingUsers:", error);
       throw new Error(error.message || "Failed to fetch pending users");
     }
   },
+
+  // async getPendingUsers() {
+  //   try {
+  //     const pendingUsers = await db
+  //       .select({
+  //         id: users.id,
+  //         email: users.email,
+  //         userType: users.userType,
+  //         firstName: users.firstName,
+  //         lastName: users.lastName,
+  //         businessName: users.businessName,
+  //         website: users.website,
+  //         instagram: users.instagram,
+  //         creativeDomains: users.creativeDomains,
+  //         phone: users.phone,
+  //         status: users.status,
+  //         originalDataBackup: users.originalDataBackup,
+  //         isAnonymous: users.isAnonymous,
+  //         createdAt: users.createdAt,
+  //         updatedAt: users.updatedAt,
+  //       })
+  //       .from(users)
+  //       .where(
+  //         and(
+  //           eq(users.status, "pending"),
+  //           ne(users.userType, "admin"),
+  //           isNotNull(users.phone),
+  //           ne(users.phone, ""),
+  //           isNotNull(users.businessName),
+  //           ne(users.businessName, ""),
+  //           isNotNull(users.website),
+  //           ne(users.website, ""),
+  //           isNotNull(users.instagram),
+  //           ne(users.instagram, ""),
+  //           isNotNull(users.creativeDomains)
+  //         )
+  //       )
+  //       .orderBy(asc(users.createdAt));
+
+  //     // Enrich with referral code owner details by checking referralUsage table
+  //     // Enrich with referral code owner details by checking referralUsage table
+  //     const enrichedUsers = await Promise.all(
+  //       pendingUsers.map(async (user) => {
+  //         // 1️⃣ Replace email from backup if user is anonymous
+  //         let processedUser = { ...user }; // don't mutate original
+  //         if (processedUser.isAnonymous && processedUser.originalDataBackup) {
+  //           try {
+  //             const backup = JSON.parse(processedUser.originalDataBackup);
+
+  //             processedUser.email = backup?.email ?? processedUser.email;
+  //             processedUser.phone = backup?.phone ?? processedUser.phone;
+  //             processedUser.website = backup?.website ?? processedUser.website;
+  //             processedUser.instagram = backup?.instagram ?? processedUser.instagram;
+  //             processedUser.businessName = backup?.businessName ?? processedUser.businessName;
+  //             processedUser.firstName = backup?.firstName ?? processedUser.firstName;
+  //             processedUser.lastName = backup?.lastName ?? processedUser.lastName;
+
+  //           } catch (err) {
+  //             console.error(
+  //               "Failed to parse originalDataBackup for user:",
+  //               processedUser.id,
+  //               err
+  //             );
+  //           }
+  //         }
+
+  //         // 2️⃣ Find the referral code this user used during signup
+  //         const usageRecord = await db
+  //           .select({
+  //             referralCode: referralUsage.referralCode,
+  //             codeType: referralUsage.codeType,
+  //             codeOwnerId: referralUsage.codeOwnerId,
+  //           })
+  //           .from(referralUsage)
+  //           .where(eq(referralUsage.usedByUserId, processedUser.id))
+  //           .limit(1);
+
+  //         if (usageRecord.length === 0) {
+  //           return { ...processedUser, referralCodeOwner: null };
+  //         }
+
+  //         const { referralCode, codeType, codeOwnerId } = usageRecord[0];
+
+  //         // If it's an admin code
+  //         if (codeType === "admin") {
+  //           return {
+  //             ...processedUser,
+  //             referralCodeOwner: {
+  //               type: "admin",
+  //               code: referralCode,
+  //             },
+  //           };
+  //         }
+
+  //         // OWNER DETAILS (for user referral codes)
+  //         if (codeType === "user" && codeOwnerId) {
+  //           const codeOwner = await db
+  //             .select({
+  //               id: users.id,
+  //               email: users.email,
+  //               instagram: users.instagram,
+  //               isAnonymous: users.isAnonymous,
+  //               originalDataBackup: users.originalDataBackup,
+  //             })
+  //             .from(users)
+  //             .where(eq(users.id, codeOwnerId))
+  //             .limit(1);
+
+  //           if (codeOwner.length > 0) {
+  //             let owner = { ...codeOwner[0] };
+
+  //             // Restore from backup if referral owner was anonymous
+  //             if (owner.isAnonymous && owner.originalDataBackup) {
+  //               try {
+  //                 const backup = JSON.parse(owner.originalDataBackup);
+
+  //                 owner.email = backup?.email ?? owner.email;
+  //                 owner.instagram = backup?.instagram ?? owner.instagram;
+
+  //               } catch (err) {
+  //                 console.error("Failed to parse referral owner backup:", owner.id, err);
+  //               }
+  //             }
+
+  //             return {
+  //               ...processedUser,
+  //               referralCodeOwner: {
+  //                 type: "user",
+  //                 id: owner.id,
+  //                 email: owner.email,
+  //                 instagram: owner.instagram,
+  //                 code: referralCode,
+  //               },
+  //             };
+  //           }
+  //         }
+
+  //         return { ...processedUser, referralCodeOwner: null };
+  //       })
+  //     );
+
+
+  //     return enrichedUsers;
+  //   } catch (error) {
+  //     console.error("Error in getPendingUsers:", error);
+  //     throw new Error(error.message || "Failed to fetch pending users");
+  //   }
+  // },
 
   async getApprovedUsers({ page = 1, limit = 10, search = "" }) {
     try {
@@ -1435,6 +1622,7 @@ const AdminService = {
             })
             .from(referralUsage)
             .where(eq(referralUsage.usedByUserId, processedUser.id))
+            .orderBy(desc(referralUsage.usedAt))
             .limit(1);
 
           if (usageRecord.length === 0) {
@@ -1562,7 +1750,7 @@ const AdminService = {
       const whereClause = and(...conditions);
 
 
-       let query = db
+      let query = db
         .select({
           id: users.id,
           email: users.email,
@@ -1638,6 +1826,7 @@ const AdminService = {
             })
             .from(referralUsage)
             .where(eq(referralUsage.usedByUserId, processedUser.id))
+            .orderBy(desc(referralUsage.usedAt))
             .limit(1);
 
           if (usageRecord.length === 0) {
