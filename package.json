@@ -18,7 +18,7 @@
   "description": "",
   "dependencies": {
     "@plunk/node": "^3.0.3",
-    "@sentry/node": "^10.32.1",
+    "@sentry/node": "^10.76.2",
     "@supabase/supabase-js": "^2.50.0",
     "axios": "^1.10.0",
     "bcrypt": "^6.0.0",
