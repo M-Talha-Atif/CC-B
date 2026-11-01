@@ -36,7 +36,7 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "node-cron": "^4.2.0",
-    "nodemailer": "^7.0.3",
+    "nodemailer": "^10.1.4",
     "pg": "^8.16.2",
     "postgres": "^3.4.7",
     "socket.io": "^4.8.1",
